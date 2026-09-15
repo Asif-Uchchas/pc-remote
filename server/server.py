@@ -39,8 +39,16 @@ try:
 except ImportError:  # pragma: no cover
     HAVE_CLIP = False
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+FROZEN = getattr(sys, "frozen", False)
+# Bundled resources (icon) live next to the script, or inside the PyInstaller bundle.
+RES_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+# Config lives next to the script when run from source; in a per-user folder when
+# packaged (the exe may sit somewhere read-only).
+if FROZEN:
+    CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Mobile Remote")
+else:
+    CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 DISCOVERY_PORT = 48888
 DEFAULT_TCP_PORT = 48889
 IS_WIN = platform.system() == "Windows"
@@ -58,6 +66,8 @@ FEATURES = [f for f in FEATURES if f]
 # ---------------------------------------------------------------------------
 
 def load_config():
+    """Returns (config, first_run)."""
+    first_run = not os.path.exists(CONFIG_PATH)
     cfg = {
         "pin": f"{random.randint(0, 9999):04d}",
         "port": DEFAULT_TCP_PORT,
@@ -70,9 +80,10 @@ def load_config():
                 cfg.update(json.load(f))
         except Exception as e:  # noqa: BLE001
             print(f"[config] could not read config.json ({e}); using defaults")
+    os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
-    return cfg
+    return cfg, first_run
 
 
 # ---------------------------------------------------------------------------
@@ -461,8 +472,60 @@ def local_ips():
 
 
 # ---------------------------------------------------------------------------
-# Optional tray icon
+# Info dialog, autostart, tray icon
 # ---------------------------------------------------------------------------
+
+def info_text(cfg):
+    ips = ", ".join(local_ips()) or "unknown"
+    return "\n".join([
+        f"Name:  {cfg['name']}",
+        f"PIN:   {cfg['pin']}",
+        f"IP:    {ips}",
+        f"Port:  {cfg['port']}",
+        "",
+        "Open Mobile Remote on your phone, pick this PC and enter the PIN.",
+        f"Settings file: {CONFIG_PATH}",
+    ])
+
+
+def show_info(cfg):
+    """Modal dialog with the connection details (used when there is no console)."""
+    text = info_text(cfg)
+    if IS_WIN:
+        import ctypes
+        threading.Thread(
+            target=lambda: ctypes.windll.user32.MessageBoxW(None, text, "Mobile Remote", 0x40),
+            daemon=True,
+        ).start()
+    else:
+        print(text)
+
+
+AUTOSTART_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def autostart_enabled():
+    if not (IS_WIN and FROZEN):
+        return False
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY) as k:
+            return winreg.QueryValueEx(k, "Mobile Remote")[0] == f'"{sys.executable}"'
+    except OSError:
+        return False
+
+
+def set_autostart(enabled):
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_KEY, 0, winreg.KEY_SET_VALUE) as k:
+        if enabled:
+            winreg.SetValueEx(k, "Mobile Remote", 0, winreg.REG_SZ, f'"{sys.executable}"')
+        else:
+            try:
+                winreg.DeleteValue(k, "Mobile Remote")
+            except OSError:
+                pass
+
 
 def run_tray(cfg):
     try:
@@ -473,7 +536,7 @@ def run_tray(cfg):
         while True:
             time.sleep(3600)
 
-    icon_path = os.path.join(BASE_DIR, "icon.png")
+    icon_path = os.path.join(RES_DIR, "icon.png")
     if os.path.exists(icon_path):
         img = PILImage.open(icon_path)
     else:
@@ -490,17 +553,23 @@ def run_tray(cfg):
         os.makedirs(cfg["downloads"], exist_ok=True)
         launch(cfg["downloads"])
 
-    menu = pystray.Menu(
+    def toggle_autostart(_icon, _item):
+        set_autostart(not autostart_enabled())
+
+    items = [
         pystray.MenuItem(f"Mobile Remote — PIN {cfg['pin']}", None, enabled=False),
-        pystray.MenuItem(f"Port {cfg['port']}", None, enabled=False),
+        pystray.MenuItem("Connection info…", lambda _i, _m: show_info(cfg), default=True),
         pystray.MenuItem("Open received files", open_downloads),
-        pystray.MenuItem("Quit", quit_app),
-    )
+    ]
+    if IS_WIN and FROZEN:
+        items.append(pystray.MenuItem("Start with Windows", toggle_autostart, checked=lambda _i: autostart_enabled()))
+    items.append(pystray.MenuItem("Quit", quit_app))
+    menu = pystray.Menu(*items)
     pystray.Icon("mobileremote", img, "Mobile Remote", menu).run()
 
 
 def main():
-    cfg = load_config()
+    cfg, first_run = load_config()
     print("=" * 52)
     print("  Mobile Remote server")
     print(f"  Name     : {cfg['name']}")
@@ -510,9 +579,13 @@ def main():
     print(f"  Features : {', '.join(FEATURES)}")
     print(f"  Files to : {cfg['downloads']}")
     print("=" * 52)
-    sys.stdout.flush()
+    if sys.stdout is not None:
+        sys.stdout.flush()
     threading.Thread(target=tcp_server, args=(cfg,), daemon=True).start()
     threading.Thread(target=discovery_server, args=(cfg,), daemon=True).start()
+    # No console (packaged exe): show the PIN in a dialog on first run.
+    if first_run and sys.stdout is None:
+        show_info(cfg)
     try:
         run_tray(cfg)
     except KeyboardInterrupt:

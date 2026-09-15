@@ -1,0 +1,79 @@
+name: Build
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  server-exe:
+    name: Server (Windows exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        working-directory: server
+        run: pip install -r requirements.txt pyinstaller
+      - name: Build
+        working-directory: server
+        run: python -m PyInstaller --noconfirm --clean MobileRemote.spec
+      - name: Smoke test (import + config)
+        working-directory: server
+        run: python -c "import ast; ast.parse(open('server.py', encoding='utf-8').read()); print('ok')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MobileRemote-server-windows
+          path: server/dist/MobileRemote.exe
+
+  android-apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter build apk --release --split-per-abi
+          flutter build apk --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MobileRemote-android
+          path: |
+            app/build/app/outputs/flutter-apk/app-release.apk
+            app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [server-exe, android-apk]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Rename
+        run: |
+          mv out/MobileRemote-server-windows/MobileRemote.exe out/MobileRemote-${{ github.ref_name }}-windows.exe
+          mv out/MobileRemote-android/app-release.apk out/MobileRemote-${{ github.ref_name }}-android.apk
+          mv out/MobileRemote-android/app-arm64-v8a-release.apk out/MobileRemote-${{ github.ref_name }}-android-arm64.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/MobileRemote-*
+          generate_release_notes: true
