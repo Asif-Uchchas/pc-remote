@@ -1,13 +1,15 @@
 {
   "artboards": [
-    { "file": "Main.dc.html", "title": "A · Dark console", "x": 0, "y": 0, "w": 390, "h": 844 },
-    { "file": "DirectionB.dc.html", "title": "B · Soft tactile", "x": 480, "y": 0, "w": 390, "h": 844 },
-    { "file": "DirectionC.dc.html", "title": "C · Editorial", "x": 960, "y": 0, "w": 390, "h": 844 }
+    { "file": "Connect.dc.html", "title": "1 · Connect", "x": 0, "y": 0, "w": 390, "h": 844 },
+    { "file": "Main.dc.html", "title": "2 · Touchpad", "x": 480, "y": 0, "w": 390, "h": 844 },
+    { "file": "Apps.dc.html", "title": "3 · Apps & shortcuts", "x": 960, "y": 0, "w": 390, "h": 844 },
+    { "file": "Screen.dc.html", "title": "4 · Screen preview", "x": 1440, "y": 0, "w": 390, "h": 844 },
+    { "file": "Share.dc.html", "title": "5 · Clipboard & files", "x": 1920, "y": 0, "w": 390, "h": 844 }
   ],
   "annotations": [
-    { "id": "note-a", "x": 0, "y": -150, "w": 390, "text": "A · Dark console\nOLED black, one cyan accent, mono labels. Feels like a hardware remote; easy on the eyes in a dark room. Tradeoff: can look 'techy' / less friendly." },
-    { "id": "note-b", "x": 480, "y": -150, "w": 390, "text": "B · Soft tactile\nWarm off-white, pill buttons with soft shadows, orange accent. Friendly, consumer-app feel; reads well in daylight. Tradeoff: bright screen when used in the dark next to a TV." },
-    { "id": "note-c", "x": 960, "y": -150, "w": 390, "text": "C · Editorial\nBlack & white, serif headings, hairline rules, no cards. Distinctive and calm. Tradeoff: fewer visual affordances — buttons read as text, needs care for touch targets." }
+    { "id": "note-flow", "x": 0, "y": -170, "w": 870, "text": "PC Remote · direction A (dark console)\nFlow: Connect → Touchpad. Bottom tabs switch between Pad / Keys / Apps / Screen / Share. Keys tab = the touchpad with the typing field open (not drawn separately).\nApp tiles use letters as placeholders — real icons come from the PC at runtime." },
+    { "id": "note-screen", "x": 1440, "y": -120, "w": 390, "text": "Screen preview needs new server work: capture at ~12 fps, JPEG, tap-to-click maps preview coords to the monitor." },
+    { "id": "note-share", "x": 1920, "y": -120, "w": 390, "text": "Clipboard sync is two-way. Files land in a fixed folder on the PC; photos use the Android share sheet too." }
   ],
   "launch": { "view": "canvas" }
 }
