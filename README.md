@@ -45,7 +45,8 @@ Works on the same Wi‑Fi, or with the PC connected to the phone's hotspot.
 | 2 finger tap | right click |
 | 3 finger tap | middle click |
 | 2 finger drag | scroll |
-| tap, then press & hold | drag |
+| hold still ~0.35 s, then move | drag |
+| hold the **Left** button | mouse button held (drag with other finger) |
 
 Bottom bar: mouse buttons, special keys / shortcuts (scrollable), media keys, and a
 live keyboard field (toggle with the keyboard icon). Pointer/scroll speed are in ⚙ settings.

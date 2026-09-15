@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -9,7 +11,7 @@ import '../remote_client.dart';
 /// * 1 finger tap   -> left click
 /// * 2 finger tap   -> right click
 /// * 2 finger drag  -> scroll
-/// * tap, then press & hold -> drag (button held until release)
+/// * press & hold (~0.35 s) then move -> drag (button held until release)
 class Touchpad extends StatefulWidget {
   final RemoteClient client;
   final double sensitivity;
@@ -18,7 +20,7 @@ class Touchpad extends StatefulWidget {
   const Touchpad({
     super.key,
     required this.client,
-    this.sensitivity = 1.6,
+    this.sensitivity = 2.5,
     this.scrollSensitivity = 1.0,
   });
 
@@ -29,8 +31,12 @@ class Touchpad extends StatefulWidget {
 class _TouchpadState extends State<Touchpad> {
   static const _tapMaxMs = 250;
   static const _tapMaxMove = 12.0;
-  static const _dragTapWindowMs = 300;
+  static const _holdToDragMs = 350;
   static const _scrollStepPx = 18.0;
+  // Pointer acceleration: at [_accelFullSpeedPxPerMs] finger speed the
+  // multiplier reaches 1 + _accelMax.
+  static const _accelMax = 2.0;
+  static const _accelFullSpeedPxPerMs = 2.5;
 
   final Map<int, Offset> _pointers = {};
   int _maxPointers = 0;
@@ -41,7 +47,8 @@ class _TouchpadState extends State<Touchpad> {
   double _accX = 0, _accY = 0;
   double _scrollAcc = 0, _scrollAccX = 0;
 
-  DateTime? _lastTapUp;
+  Duration? _lastMoveTs;
+  Timer? _holdTimer;
   bool _dragging = false;
 
   void _onDown(PointerDownEvent e) {
@@ -51,16 +58,19 @@ class _TouchpadState extends State<Touchpad> {
       _travel = 0;
       _maxPointers = 1;
       _accX = _accY = _scrollAcc = _scrollAccX = 0;
+      _lastMoveTs = e.timeStamp;
 
-      final last = _lastTapUp;
-      if (last != null &&
-          DateTime.now().difference(last).inMilliseconds < _dragTapWindowMs) {
-        // Tap followed quickly by a press: start a drag.
-        _dragging = true;
-        widget.client.buttonDown('left');
-        HapticFeedback.selectionClick();
-      }
+      // Hold still for a moment -> start a drag (mouse button held down).
+      _holdTimer?.cancel();
+      _holdTimer = Timer(const Duration(milliseconds: _holdToDragMs), () {
+        if (_pointers.length == 1 && _travel <= _tapMaxMove && !_dragging) {
+          _dragging = true;
+          widget.client.buttonDown('left');
+          HapticFeedback.mediumImpact();
+        }
+      });
     } else {
+      _holdTimer?.cancel();
       _maxPointers = _maxPointers < _pointers.length ? _pointers.length : _maxPointers;
     }
   }
@@ -71,10 +81,18 @@ class _TouchpadState extends State<Touchpad> {
     final delta = e.localPosition - prev;
     _pointers[e.pointer] = e.localPosition;
     _travel += delta.distance;
+    if (_travel > _tapMaxMove && !_dragging) _holdTimer?.cancel();
 
     if (_pointers.length == 1) {
-      _accX += delta.dx * widget.sensitivity;
-      _accY += delta.dy * widget.sensitivity;
+      // Speed-based acceleration so small motions stay precise while flicks
+      // cross the screen.
+      final dtMs = (e.timeStamp - (_lastMoveTs ?? e.timeStamp)).inMicroseconds / 1000.0;
+      _lastMoveTs = e.timeStamp;
+      final speed = dtMs > 0 ? delta.distance / dtMs : 0.0;
+      final accel = 1 + _accelMax * (speed / _accelFullSpeedPxPerMs).clamp(0.0, 1.0);
+      final gain = widget.sensitivity * accel;
+      _accX += delta.dx * gain;
+      _accY += delta.dy * gain;
       final dx = _accX.truncate();
       final dy = _accY.truncate();
       if (dx != 0 || dy != 0) {
@@ -100,6 +118,7 @@ class _TouchpadState extends State<Touchpad> {
   void _onUp(PointerEvent e) {
     _pointers.remove(e.pointer);
     if (_pointers.isNotEmpty) return;
+    _holdTimer?.cancel();
 
     final now = DateTime.now();
     final downTime = _downTime;
@@ -110,24 +129,25 @@ class _TouchpadState extends State<Touchpad> {
     if (_dragging) {
       widget.client.buttonUp('left');
       _dragging = false;
-      _lastTapUp = null;
     } else if (isTap) {
       if (_maxPointers == 1) {
         widget.client.click(button: 'left');
-        _lastTapUp = now;
       } else if (_maxPointers == 2) {
         widget.client.click(button: 'right');
-        _lastTapUp = null;
       } else if (_maxPointers >= 3) {
         widget.client.click(button: 'middle');
-        _lastTapUp = null;
       }
       HapticFeedback.lightImpact();
-    } else {
-      _lastTapUp = null;
     }
     _downTime = null;
     _maxPointers = 0;
+  }
+
+  @override
+  void dispose() {
+    _holdTimer?.cancel();
+    if (_dragging) widget.client.buttonUp('left');
+    super.dispose();
   }
 
   @override

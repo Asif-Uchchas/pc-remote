@@ -16,7 +16,7 @@ class ControlScreen extends StatefulWidget {
 class _ControlScreenState extends State<ControlScreen> {
   bool _showKeyboard = false;
   bool _showMedia = true;
-  double _sensitivity = 1.6;
+  double _sensitivity = 2.5;
   double _scrollSensitivity = 1.0;
 
   @override
@@ -25,7 +25,7 @@ class _ControlScreenState extends State<ControlScreen> {
     SharedPreferences.getInstance().then((p) {
       if (!mounted) return;
       setState(() {
-        _sensitivity = p.getDouble('sensitivity') ?? 1.6;
+        _sensitivity = p.getDouble('sensitivity') ?? 2.5;
         _scrollSensitivity = p.getDouble('scrollSensitivity') ?? 1.0;
         _showMedia = p.getBool('showMedia') ?? true;
       });
@@ -61,8 +61,8 @@ class _ControlScreenState extends State<ControlScreen> {
               Slider(
                 value: _sensitivity,
                 min: 0.5,
-                max: 4,
-                divisions: 35,
+                max: 10,
+                divisions: 38,
                 onChanged: (v) {
                   setSheet(() {});
                   setState(() => _sensitivity = v);
@@ -168,14 +168,11 @@ class _MouseButtons extends StatelessWidget {
 
   Widget _btn(String label, String button, {int flex = 3}) => Expanded(
         flex: flex,
-        child: FilledButton.tonal(
-          style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14)),
-          onPressed: () {
-            client.click(button: button);
-            HapticFeedback.lightImpact();
-          },
-          child: Text(label),
+        child: _HoldableButton(
+          label: label,
+          onClick: () => client.click(button: button),
+          onHoldStart: () => client.buttonDown(button),
+          onHoldEnd: () => client.buttonUp(button),
         ),
       );
 
@@ -350,4 +347,68 @@ class _TypingFieldState extends State<_TypingField> {
           ),
         ),
       );
+}
+
+/// Tap = click. Press and hold = mouse button stays down until released,
+/// so you can drag with another finger on the touchpad.
+class _HoldableButton extends StatefulWidget {
+  final String label;
+  final VoidCallback onClick;
+  final VoidCallback onHoldStart;
+  final VoidCallback onHoldEnd;
+  const _HoldableButton({
+    required this.label,
+    required this.onClick,
+    required this.onHoldStart,
+    required this.onHoldEnd,
+  });
+
+  @override
+  State<_HoldableButton> createState() => _HoldableButtonState();
+}
+
+class _HoldableButtonState extends State<_HoldableButton> {
+  bool _holding = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: () {
+        widget.onClick();
+        HapticFeedback.lightImpact();
+      },
+      onLongPressStart: (_) {
+        setState(() => _holding = true);
+        widget.onHoldStart();
+        HapticFeedback.mediumImpact();
+      },
+      onLongPressEnd: (_) {
+        setState(() => _holding = false);
+        widget.onHoldEnd();
+      },
+      onLongPressCancel: () {
+        if (_holding) {
+          setState(() => _holding = false);
+          widget.onHoldEnd();
+        }
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          color: _holding ? scheme.primary : scheme.secondaryContainer,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          _holding ? '${widget.label} (held)' : widget.label,
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: _holding ? scheme.onPrimary : scheme.onSecondaryContainer,
+          ),
+        ),
+      ),
+    );
+  }
 }
