@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../remote_client.dart';
+import '../theme.dart';
 
 /// Multi-touch trackpad.
 ///
@@ -16,12 +17,14 @@ class Touchpad extends StatefulWidget {
   final RemoteClient client;
   final double sensitivity;
   final double scrollSensitivity;
+  final bool haptics;
 
   const Touchpad({
     super.key,
     required this.client,
     this.sensitivity = 2.5,
     this.scrollSensitivity = 1.0,
+    this.haptics = true,
   });
 
   @override
@@ -64,9 +67,9 @@ class _TouchpadState extends State<Touchpad> {
       _holdTimer?.cancel();
       _holdTimer = Timer(const Duration(milliseconds: _holdToDragMs), () {
         if (_pointers.length == 1 && _travel <= _tapMaxMove && !_dragging) {
-          _dragging = true;
+          setState(() => _dragging = true);
           widget.client.buttonDown('left');
-          HapticFeedback.mediumImpact();
+          if (widget.haptics) HapticFeedback.mediumImpact();
         }
       });
     } else {
@@ -128,7 +131,7 @@ class _TouchpadState extends State<Touchpad> {
 
     if (_dragging) {
       widget.client.buttonUp('left');
-      _dragging = false;
+      setState(() => _dragging = false);
     } else if (isTap) {
       if (_maxPointers == 1) {
         widget.client.click(button: 'left');
@@ -137,7 +140,7 @@ class _TouchpadState extends State<Touchpad> {
       } else if (_maxPointers >= 3) {
         widget.client.click(button: 'middle');
       }
-      HapticFeedback.lightImpact();
+      if (widget.haptics) HapticFeedback.lightImpact();
     }
     _downTime = null;
     _maxPointers = 0;
@@ -151,40 +154,71 @@ class _TouchpadState extends State<Touchpad> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Listener(
-      behavior: HitTestBehavior.opaque,
-      onPointerDown: _onDown,
-      onPointerMove: _onMove,
-      onPointerUp: _onUp,
-      onPointerCancel: _onUp,
-      child: Container(
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: scheme.outlineVariant),
-        ),
-        child: Center(
-          child: Opacity(
-            opacity: 0.35,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+  Widget build(BuildContext context) => Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: _onDown,
+        onPointerMove: _onMove,
+        onPointerUp: _onUp,
+        onPointerCancel: _onUp,
+        child: ClipRRect(
+          borderRadius: T.r16,
+          child: Container(
+            decoration: BoxDecoration(
+              color: T.surface,
+              borderRadius: T.r16,
+              border: Border.all(color: _dragging ? T.accent : T.line),
+            ),
+            child: Stack(
               children: [
-                Icon(Icons.touch_app_outlined, size: 40, color: scheme.onSurfaceVariant),
-                const SizedBox(height: 8),
-                Text('Touchpad', style: TextStyle(color: scheme.onSurfaceVariant)),
-                const SizedBox(height: 4),
-                Text(
-                  'tap: click • 2 fingers: right-click / scroll\ntap then hold: drag',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                const Positioned.fill(child: CustomPaint(painter: _DotGrid())),
+                const Positioned(
+                  top: 14,
+                  left: 14,
+                  child: Text('TRACKPAD', style: T.label),
+                ),
+                Positioned(
+                  top: 14,
+                  right: 14,
+                  child: Text('${widget.sensitivity.toStringAsFixed(1)}×', style: T.label),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 18,
+                  child: Text(
+                    _dragging
+                        ? 'DRAGGING · LIFT TO DROP'
+                        : 'tap · click   ·   2 fingers · right / scroll\nhold · drag',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: T.mono,
+                      fontSize: 11,
+                      height: 1.6,
+                      color: _dragging ? T.accent : T.dim,
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
         ),
-      ),
-    );
+      );
+}
+
+class _DotGrid extends CustomPainter {
+  const _DotGrid();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = T.grid;
+    const step = 22.0;
+    for (var y = step; y < size.height; y += step) {
+      for (var x = step; x < size.width; x += step) {
+        canvas.drawCircle(Offset(x, y), 1, paint);
+      }
+    }
   }
+
+  @override
+  bool shouldRepaint(_DotGrid oldDelegate) => false;
 }

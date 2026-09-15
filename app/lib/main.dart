@@ -2,27 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'remote_client.dart';
+import 'settings.dart';
+import 'theme.dart';
 import 'ui/connect_screen.dart';
-import 'ui/control_screen.dart';
+import 'ui/shell.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
-    systemNavigationBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    systemNavigationBarColor: T.bg,
+    systemNavigationBarIconBrightness: Brightness.light,
   ));
-  runApp(const PcRemoteApp());
+  runApp(const MobileRemoteApp());
 }
 
-class PcRemoteApp extends StatefulWidget {
-  const PcRemoteApp({super.key});
+class MobileRemoteApp extends StatefulWidget {
+  const MobileRemoteApp({super.key});
 
   @override
-  State<PcRemoteApp> createState() => _PcRemoteAppState();
+  State<MobileRemoteApp> createState() => _MobileRemoteAppState();
 }
 
-class _PcRemoteAppState extends State<PcRemoteApp> {
+class _MobileRemoteAppState extends State<MobileRemoteApp> {
   final _client = RemoteClient();
+  final _settings = Settings()..load();
 
   @override
   void dispose() {
@@ -31,27 +36,18 @@ class _PcRemoteAppState extends State<PcRemoteApp> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    const seed = Color(0xFF1E78DC);
-    return MaterialApp(
-      title: 'PC Remote',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: seed),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-            seedColor: seed, brightness: Brightness.dark),
-        useMaterial3: true,
-      ),
-      themeMode: ThemeMode.system,
-      home: ListenableBuilder(
-        listenable: _client,
-        builder: (context, _) => _client.isConnected
-            ? ControlScreen(client: _client)
-            : ConnectScreen(client: _client),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => MaterialApp(
+        title: 'Mobile Remote',
+        debugShowCheckedModeBanner: false,
+        theme: buildTheme(),
+        home: ListenableBuilder(
+          listenable: _client,
+          builder: (context, _) => AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: _client.isConnected
+                ? HomeShell(key: const ValueKey('home'), client: _client, settings: _settings)
+                : ConnectScreen(key: const ValueKey('connect'), client: _client),
+          ),
+        ),
+      );
 }
