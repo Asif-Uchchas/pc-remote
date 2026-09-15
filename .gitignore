@@ -6,3 +6,4 @@ app/.idea/
 app/android/.gradle/
 app/android/local.properties
 *.xapk
+design/pc-remote-app-design.html

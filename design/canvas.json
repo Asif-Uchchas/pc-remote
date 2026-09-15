@@ -1,0 +1,13 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "A · Dark console", "x": 0, "y": 0, "w": 390, "h": 844 },
+    { "file": "DirectionB.dc.html", "title": "B · Soft tactile", "x": 480, "y": 0, "w": 390, "h": 844 },
+    { "file": "DirectionC.dc.html", "title": "C · Editorial", "x": 960, "y": 0, "w": 390, "h": 844 }
+  ],
+  "annotations": [
+    { "id": "note-a", "x": 0, "y": -150, "w": 390, "text": "A · Dark console\nOLED black, one cyan accent, mono labels. Feels like a hardware remote; easy on the eyes in a dark room. Tradeoff: can look 'techy' / less friendly." },
+    { "id": "note-b", "x": 480, "y": -150, "w": 390, "text": "B · Soft tactile\nWarm off-white, pill buttons with soft shadows, orange accent. Friendly, consumer-app feel; reads well in daylight. Tradeoff: bright screen when used in the dark next to a TV." },
+    { "id": "note-c", "x": 960, "y": -150, "w": 390, "text": "C · Editorial\nBlack & white, serif headings, hairline rules, no cards. Distinctive and calm. Tradeoff: fewer visual affordances — buttons read as text, needs care for touch targets." }
+  ],
+  "launch": { "view": "canvas" }
+}
