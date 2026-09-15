@@ -236,30 +236,29 @@ class RemoteClient extends ChangeNotifier {
 
   // ---- Files -------------------------------------------------------------
 
-  /// Streams a file to the PC in base64 chunks. [onProgress] gets 0..1.
-  Future<String> sendFile(String path, String name,
-      {void Function(double)? onProgress}) async {
-    final f = File(path);
-    final size = await f.length();
+  /// Streams [data] to the PC in base64 chunks. [onProgress] gets 0..1.
+  Future<String> sendFile({
+    required String name,
+    required int size,
+    required Stream<List<int>> data,
+    void Function(double)? onProgress,
+  }) async {
     final begin = await request({'t': 'file_begin', 'name': name, 'size': size});
     if (begin['t'] != 'ok') throw Exception(begin['msg'] ?? 'PC refused the file');
     final token = begin['token'] as String;
 
     var sent = 0;
     const chunk = 48 * 1024; // multiple of 3 so base64 chunks concatenate cleanly
-    final stream = f.openRead();
     final buffer = BytesBuilder(copy: false);
-    await for (final part in stream) {
+    await for (final part in data) {
       buffer.add(part);
       while (buffer.length >= chunk) {
         final bytes = buffer.takeBytes();
-        final head = bytes.sublist(0, chunk);
-        final rest = bytes.sublist(chunk);
-        _send({'t': 'file_chunk', 'token': token, 'd': base64Encode(head)});
-        buffer.add(rest);
-        sent += head.length;
-        onProgress?.call(sent / size);
-        // Yield so the socket can drain; avoids buffering the whole file.
+        _send({'t': 'file_chunk', 'token': token, 'd': base64Encode(Uint8List.sublistView(bytes, 0, chunk))});
+        buffer.add(Uint8List.sublistView(bytes, chunk));
+        sent += chunk;
+        onProgress?.call(size == 0 ? 1 : sent / size);
+        // Let the socket drain instead of buffering the whole file in memory.
         await _socket?.flush();
       }
     }
@@ -267,7 +266,7 @@ class RemoteClient extends ChangeNotifier {
       final bytes = buffer.takeBytes();
       _send({'t': 'file_chunk', 'token': token, 'd': base64Encode(bytes)});
       sent += bytes.length;
-      onProgress?.call(sent / size);
+      onProgress?.call(size == 0 ? 1 : sent / size);
     }
     final end = await request({'t': 'file_end', 'token': token}, timeout: const Duration(seconds: 30));
     if (end['t'] != 'ok') throw Exception(end['msg'] ?? 'Transfer failed');
