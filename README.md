@@ -36,7 +36,7 @@ The server creates a virtual keyboard+mouse through `/dev/uinput`, so it works o
 any compositor. One-time setup:
 
 ```bash
-sudo pacman -S grim wl-clipboard          # screen preview + clipboard (Arch/Omarchy)
+sudo pacman -S grim wl-clipboard playerctl  # screen preview, clipboard, now-playing (Arch/Omarchy)
 sudo usermod -aG input $USER              # allow /dev/uinput, then log out and back in
 pip install -r requirements.txt           # includes python-evdev on Linux
 python server.py
@@ -70,11 +70,16 @@ Works on the same Wi‑Fi, or with the PC connected to the phone's hotspot.
 
 | Tab | What it does |
 |---|---|
-| **Pad** | Trackpad, mouse buttons, shortcut keys, media keys |
-| **Keys** | Same, with a live typing field (text goes to the PC as you type) |
+| **Pad** | Trackpad, mouse buttons, shortcut keys, media keys, **PC volume slider + now playing** |
+| **Keys** | Same, with a live typing field (text goes to the PC as you type) and a **mic button for dictation** |
 | **Apps** | Lock / Sleep / Power, launch apps installed on the PC, run macros (key combos) |
 | **Screen** | Live view of the PC screen with direct touch: finger = pointer, tap = click, hold = drag, 2 fingers = right‑click / scroll. Rotate the phone for fullscreen |
 | **Share** | PC ↔ phone clipboard, send text, send photos/files to `Downloads\Mobile Remote` |
+| 🎮 (header) | **Gamepad**: landscape virtual controller — sticks, d-pad, ABXY, bumpers, analog triggers. "XBOX" mode is a real virtual Xbox 360 pad (Windows: needs the [ViGEmBus driver](https://github.com/nefarius/ViGEmBus/releases); Linux: uinput), "KEYS" mode maps to keyboard keys for any emulator |
+
+**Android share sheet:** share a link, text, photo, video or file from any app to *Mobile Remote* —
+text lands in the PC clipboard, files go to `Downloads\Mobile Remote`. The app connects to the
+last PC by itself if it isn't already connected.
 
 ## Gestures
 
@@ -124,6 +129,9 @@ A message may carry `"id"`; the reply echoes it.
 | `{"t":"monitors"}` | monitor list |
 | `{"t":"clip_get"}` / `{"t":"clip_set","s":"..."}` | clipboard |
 | `{"t":"file_begin","name","size"}` → `{"token"}`, then `file_chunk` (base64 `d`), `file_end` | file transfer |
+| `{"t":"volume_get"}` / `{"t":"volume_set","v":40}` / `{"t":"mute_set","m":true}` | master volume |
+| `{"t":"media_info"}` → `{"media":{title,artist,playing,app},"vol","muted"}` | now playing + volume |
+| `{"t":"pad_mode","mode":"xbox\|keys"}` then `{"t":"pad","b":<bitmask>,"lx","ly","rx","ry","lt","rt"}` | virtual gamepad (bits: a b x y lb rb back start ls rs du dd dl dr guide) |
 | `{"t":"ping"}` | → `{"t":"pong","locked":false}` |
 
 **Screen stream:** open a second connection whose hello has `"mode":"stream"` plus `fps`, `w`, `q`, `mon`.

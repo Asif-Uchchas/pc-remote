@@ -22,7 +22,9 @@ import threading
 import time
 
 from capture import make_capture
+from gamepad import make_gamepad, parse_state, xbox_available
 from inputs import make_backend
+from media import make_now_playing, make_volume
 from platform_util import (FROZEN, IS_HYPRLAND, IS_LINUX, IS_MAC, IS_WAYLAND, IS_WIN, desktop_name,
                            is_locked, local_ips, mac_address, which)
 
@@ -32,7 +34,7 @@ try:
 except ImportError:  # pragma: no cover
     HAVE_CLIP = False
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DISCOVERY_PORT = 48888
 DEFAULT_TCP_PORT = 48889
 
@@ -48,9 +50,13 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 
 inp, INPUT_NOTE = make_backend()
 cap, CAPTURE_NOTE = make_capture()
+volume = make_volume()
+now_playing = make_now_playing()
 
 FEATURES = [f for f in ["apps", "system", "clipboard" if HAVE_CLIP else None, "files",
-                        "screen" if cap else None, "wol", "lock_state"] if f]
+                        "screen" if cap else None, "wol", "lock_state",
+                        "volume" if volume else None, "now_playing" if now_playing else None,
+                        "gamepad", "gamepad_xbox" if xbox_available() else None] if f]
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +287,7 @@ def locked_state():
     return _lock_cache["locked"]
 
 
-def handle(msg, cfg):
+def handle(msg, cfg, session):
     t = msg.get("t")
     if t == "mv":
         inp.move(int(msg.get("dx", 0)), int(msg.get("dy", 0)))
@@ -333,6 +339,36 @@ def handle(msg, cfg):
         file_chunk(str(msg.get("token")), msg.get("d", ""))
     elif t == "file_end":
         return {"t": "ok", "path": file_end(str(msg.get("token")))}
+    elif t == "volume_get":
+        if not volume:
+            return {"t": "err", "msg": "volume control unavailable"}
+        return {"t": "ok", **volume.get()}
+    elif t == "volume_set":
+        if volume:
+            volume.set(int(msg.get("v", 50)))
+    elif t == "mute_set":
+        if volume:
+            volume.mute(bool(msg.get("m", True)))
+    elif t == "media_info":
+        info = now_playing.get() if now_playing else None
+        reply = {"t": "ok", "media": info}
+        if volume:
+            try:
+                reply.update(volume.get())
+            except Exception:  # noqa: BLE001
+                pass
+        return reply
+    elif t == "pad_mode":
+        if session.get("pad"):
+            session["pad"].close()
+        session["pad"], note = make_gamepad(str(msg.get("mode", "keys")), inp, msg.get("map"))
+        return {"t": "ok", "mode": session["pad"].name, "msg": note or ""}
+    elif t == "pad":
+        pad = session.get("pad")
+        if pad is None:
+            pad, _ = make_gamepad("keys", inp)
+            session["pad"] = pad
+        pad.update(parse_state(msg))
     else:
         return {"t": "err", "msg": f"unknown type {t!r}"}
     return None
@@ -358,6 +394,7 @@ def client_thread(conn, addr, cfg):
     conn.settimeout(90)
     authed = False
     stream_stop = None
+    session = {}
     buf = b""
 
     def send(obj):
@@ -406,7 +443,7 @@ def client_thread(conn, addr, cfg):
                     continue
 
                 try:
-                    reply = handle(msg, cfg)
+                    reply = handle(msg, cfg, session)
                 except Exception as e:  # noqa: BLE001
                     reply = {"t": "err", "msg": str(e)}
                 if reply is None and "id" in msg:
@@ -420,6 +457,8 @@ def client_thread(conn, addr, cfg):
     finally:
         if stream_stop is not None:
             stream_stop.set()
+        if session.get("pad"):
+            session["pad"].close()
         conn.close()
         print(f"[tcp] {peer} disconnected")
 

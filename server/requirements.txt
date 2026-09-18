@@ -6,3 +6,10 @@ pyperclip>=1.8
 psutil>=5.9
 # Linux/Wayland only (Hyprland, Sway, GNOME, KDE): virtual input device
 evdev>=1.6; sys_platform == "linux"
+# Windows only: volume, now playing, virtual Xbox controller (needs ViGEmBus driver)
+pycaw>=20240210; sys_platform == "win32"
+winrt-runtime>=3.0; sys_platform == "win32"
+winrt-Windows.Media.Control>=3.0; sys_platform == "win32"
+winrt-Windows.Foundation>=3.0; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.0; sys_platform == "win32"
+vgamepad>=0.1.0; sys_platform == "win32"

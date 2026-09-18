@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -5,6 +7,7 @@ import '../remote_client.dart';
 import '../settings.dart';
 import '../theme.dart';
 import 'touchpad.dart';
+import 'voice_button.dart';
 import 'widgets.dart';
 
 /// Touchpad tab. With [keyboard] the live typing field is shown (the "Keys" tab).
@@ -21,6 +24,7 @@ class PadScreen extends StatefulWidget {
 class _PadScreenState extends State<PadScreen> {
   /// Sticky modifiers: applied to the next key chip / typed character.
   final Set<String> _mods = {};
+  String? _dictating; // partial speech text being previewed
 
   void _toggleMod(String m) {
     HapticFeedback.selectionClick();
@@ -70,11 +74,34 @@ class _PadScreenState extends State<PadScreen> {
           _KeyRow(onKey: _sendKey, superLabel: superLabel),
           if (settings.showMedia && !widget.keyboard) ...[
             const SizedBox(height: 10),
-            _MediaRow(client: client),
+            MediaPanel(client: client),
           ],
           if (widget.keyboard) ...[
+            if (_dictating != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.graphic_eq, size: 14, color: T.danger),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(_dictating!.isEmpty ? 'Listening…' : _dictating!,
+                        maxLines: 1, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: T.text3, fontStyle: FontStyle.italic)),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 10),
-            TypingField(client: client, onText: _typed, onEnter: () => _sendKey('enter', const [])),
+            Row(
+              children: [
+                Expanded(child: TypingField(client: client, onText: _typed, onEnter: () => _sendKey('enter', const []))),
+                const SizedBox(width: 8),
+                VoiceButton(
+                  onText: (t) => client.typeText(t),
+                  onPartial: (p) => setState(() => _dictating = p),
+                ),
+              ],
+            ),
           ],
         ],
       ),
@@ -242,41 +269,183 @@ class _KeyRow extends StatelessWidget {
       );
 }
 
-class _MediaRow extends StatelessWidget {
+/// Media keys, live volume slider and now-playing line.
+class MediaPanel extends StatefulWidget {
   final RemoteClient client;
-  const _MediaRow({required this.client});
+  const MediaPanel({super.key, required this.client});
 
-  Widget _btn(IconData icon, String key, {bool hot = false}) => Expanded(
+  @override
+  State<MediaPanel> createState() => _MediaPanelState();
+}
+
+class _MediaPanelState extends State<MediaPanel> {
+  Timer? _poll;
+  Timer? _debounce;
+  double? _vol; // 0..100
+  bool _muted = false;
+  bool _dragging = false;
+  Map<String, dynamic>? _media;
+
+  bool get _hasVolume => widget.client.serverSupports('volume');
+  bool get _hasNowPlaying => widget.client.serverSupports('now_playing');
+
+  @override
+  void initState() {
+    super.initState();
+    if (_hasVolume || _hasNowPlaying) {
+      _refresh();
+      _poll = Timer.periodic(const Duration(seconds: 3), (_) => _refresh());
+    }
+  }
+
+  Future<void> _refresh() async {
+    if (!widget.client.isConnected) return;
+    try {
+      final r = await widget.client.request({'t': 'media_info'}, timeout: const Duration(seconds: 5));
+      if (!mounted) return;
+      setState(() {
+        _media = r['media'] as Map<String, dynamic>?;
+        if (!_dragging && r['vol'] != null) _vol = (r['vol'] as num).toDouble();
+        if (r['muted'] != null) _muted = r['muted'] == true;
+      });
+    } catch (_) {}
+  }
+
+  void _setVolume(double v) {
+    setState(() => _vol = v);
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 60), () => widget.client.send({'t': 'volume_set', 'v': v.round()}));
+  }
+
+  void _key(String k) {
+    HapticFeedback.selectionClick();
+    widget.client.key(k);
+    Future<void>.delayed(const Duration(milliseconds: 400), _refresh);
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  Widget _btn(IconData icon, VoidCallback onTap, {bool hot = false}) => Expanded(
         child: Material(
           color: hot ? T.accent : T.surface2,
           borderRadius: T.r10,
           child: InkWell(
             borderRadius: T.r10,
-            onTap: () {
-              HapticFeedback.selectionClick();
-              client.key(key);
-            },
+            onTap: onTap,
             child: SizedBox(height: 44, child: Icon(icon, size: 20, color: hot ? T.bg : T.text2)),
           ),
         ),
       );
 
   @override
-  Widget build(BuildContext context) => Row(
-        children: [
-          _btn(Icons.skip_previous_rounded, 'prev'),
-          const SizedBox(width: 6),
-          _btn(Icons.play_arrow_rounded, 'play_pause', hot: true),
-          const SizedBox(width: 6),
-          _btn(Icons.skip_next_rounded, 'next'),
-          const SizedBox(width: 6),
-          _btn(Icons.volume_off_rounded, 'mute'),
-          const SizedBox(width: 6),
-          _btn(Icons.volume_down_rounded, 'vol_down'),
-          const SizedBox(width: 6),
-          _btn(Icons.volume_up_rounded, 'vol_up'),
-        ],
-      );
+  Widget build(BuildContext context) {
+    final m = _media;
+    final playing = m?['playing'] == true;
+    final title = (m?['title'] as String?) ?? '';
+    final artist = (m?['artist'] as String?) ?? '';
+    final vol = _vol;
+    return Column(
+      children: [
+        if (_hasNowPlaying)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8, left: 2, right: 2),
+            child: Row(
+              children: [
+                Icon(playing ? Icons.graphic_eq : Icons.music_note_outlined, size: 14, color: m == null ? T.dim : T.accent),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    m == null ? 'Nothing playing' : (artist.isEmpty ? title : '$title — $artist'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: m == null ? T.dim : T.text2),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Row(
+          children: [
+            _btn(Icons.skip_previous_rounded, () => _key('prev')),
+            const SizedBox(width: 6),
+            _btn(playing ? Icons.pause_rounded : Icons.play_arrow_rounded, () => _key('play_pause'), hot: true),
+            const SizedBox(width: 6),
+            _btn(Icons.skip_next_rounded, () => _key('next')),
+            const SizedBox(width: 6),
+            if (_hasVolume && vol != null)
+              Expanded(
+                flex: 4,
+                child: Container(
+                  height: 44,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(color: T.surface2, borderRadius: T.r10),
+                  child: Row(
+                    children: [
+                      GestureDetector(
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          setState(() => _muted = !_muted);
+                          widget.client.send({'t': 'mute_set', 'm': _muted});
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Icon(
+                            _muted
+                                ? Icons.volume_off_rounded
+                                : (vol < 1 ? Icons.volume_mute_rounded : vol < 50 ? Icons.volume_down_rounded : Icons.volume_up_rounded),
+                            size: 20,
+                            color: _muted ? T.danger : T.text2,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: SliderTheme(
+                          data: const SliderThemeData(
+                            trackHeight: 3,
+                            thumbShape: RoundSliderThumbShape(enabledThumbRadius: 7),
+                            overlayShape: RoundSliderOverlayShape(overlayRadius: 14),
+                          ),
+                          child: Slider(
+                            value: vol.clamp(0, 100),
+                            min: 0,
+                            max: 100,
+                            onChangeStart: (_) => _dragging = true,
+                            onChanged: _setVolume,
+                            onChangeEnd: (v) {
+                              _dragging = false;
+                              widget.client.send({'t': 'volume_set', 'v': v.round()});
+                            },
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 30,
+                        child: Text('${vol.round()}',
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(fontFamily: T.mono, fontSize: 11, color: T.muted)),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                  ),
+                ),
+              )
+            else ...[
+              _btn(Icons.volume_off_rounded, () => _key('mute')),
+              const SizedBox(width: 6),
+              _btn(Icons.volume_down_rounded, () => _key('vol_down')),
+              const SizedBox(width: 6),
+              _btn(Icons.volume_up_rounded, () => _key('vol_up')),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 /// A text field whose edits are streamed to the PC as keystrokes.

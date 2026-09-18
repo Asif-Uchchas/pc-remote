@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.asif.pc_remote"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

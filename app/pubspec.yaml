@@ -36,6 +36,8 @@ dependencies:
   shared_preferences: ^2.5.5
   file_picker: ^13.1.0
   package_info_plus: ^10.2.1
+  receive_sharing_intent: ^1.9.0
+  speech_to_text: ^7.5.0
 
 dev_dependencies:
   flutter_test:

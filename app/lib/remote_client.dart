@@ -248,6 +248,9 @@ class RemoteClient extends ChangeNotifier {
     }
   }
 
+  /// Fire-and-forget message (no reply expected).
+  void send(Map<String, Object?> msg) => _send(msg);
+
   /// Sends a message and waits for the reply carrying the same id.
   Future<Map<String, dynamic>> request(Map<String, Object?> msg,
       {Duration timeout = const Duration(seconds: 10)}) {

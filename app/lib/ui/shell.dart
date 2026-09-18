@@ -3,8 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../remote_client.dart';
 import '../settings.dart';
+import '../share_intake.dart';
 import '../theme.dart';
 import 'apps_screen.dart';
+import 'gamepad_screen.dart';
 import 'pad_screen.dart';
 import 'screen_screen.dart';
 import 'share_screen.dart';
@@ -16,7 +18,8 @@ enum Tab { pad, keys, apps, screen, share }
 class HomeShell extends StatefulWidget {
   final RemoteClient client;
   final Settings settings;
-  const HomeShell({super.key, required this.client, required this.settings});
+  final ShareIntake? share;
+  const HomeShell({super.key, required this.client, required this.settings, this.share});
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -87,6 +90,12 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
+  void _openGamepad() {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => GamepadScreen(client: widget.client, settings: widget.settings),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final client = widget.client;
@@ -103,9 +112,10 @@ class _HomeShellState extends State<HomeShell> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Column(
             children: [
-              _Header(client: client, onSettings: _openSettings),
+              _Header(client: client, onSettings: _openSettings, onGamepad: _openGamepad),
               const SizedBox(height: 12),
               _StatusBanner(client: client),
+              if (widget.share != null) _ShareCard(share: widget.share!),
               Expanded(child: body),
               const SizedBox(height: 6),
               _BottomNav(tab: _tab, onChanged: (t) {
@@ -166,10 +176,86 @@ class _StatusBanner extends StatelessWidget {
       );
 }
 
+/// Items shared in from other apps, with send progress.
+class _ShareCard extends StatelessWidget {
+  final ShareIntake share;
+  const _ShareCard({required this.share});
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: share,
+        builder: (context, _) {
+          if (share.items.isEmpty) return const SizedBox.shrink();
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              decoration: BoxDecoration(color: T.surface, borderRadius: T.r12, border: Border.all(color: T.line)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Text('SHARED TO PC', style: T.label),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: share.clearFinished,
+                        child: const Padding(padding: EdgeInsets.all(4), child: Icon(Icons.close, size: 16, color: T.muted)),
+                      ),
+                    ],
+                  ),
+                  for (final it in share.items.take(4)) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(
+                          it.status == 'done'
+                              ? Icons.check
+                              : it.status == 'failed'
+                                  ? Icons.error_outline
+                                  : it.isFile
+                                      ? Icons.insert_drive_file_outlined
+                                      : Icons.link,
+                          size: 16,
+                          color: it.status == 'done' ? T.ok : (it.status == 'failed' ? T.danger : T.muted),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            it.status == 'failed' ? '${it.label} — ${it.error}' : it.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12, color: T.text2),
+                          ),
+                        ),
+                        if (it.status == 'sending') ...[
+                          const SizedBox(width: 8),
+                          Text('${(it.progress * 100).round()}%', style: const TextStyle(fontFamily: T.mono, fontSize: 10, color: T.accent)),
+                        ],
+                      ],
+                    ),
+                    if (it.status == 'sending')
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, left: 24),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(2),
+                          child: LinearProgressIndicator(value: it.progress, minHeight: 2, backgroundColor: T.line, color: T.accent),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      );
+}
+
 class _Header extends StatelessWidget {
   final RemoteClient client;
   final VoidCallback onSettings;
-  const _Header({required this.client, required this.onSettings});
+  final VoidCallback onGamepad;
+  const _Header({required this.client, required this.onSettings, required this.onGamepad});
 
   @override
   Widget build(BuildContext context) => Row(
@@ -194,6 +280,8 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
+          IconSquare(Icons.sports_esports_outlined, onTap: onGamepad, tooltip: 'Gamepad'),
+          const SizedBox(width: 8),
           IconSquare(Icons.tune, onTap: onSettings, tooltip: 'Settings'),
         ],
       );
