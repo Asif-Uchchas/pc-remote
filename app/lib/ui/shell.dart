@@ -105,6 +105,7 @@ class _HomeShellState extends State<HomeShell> {
             children: [
               _Header(client: client, onSettings: _openSettings),
               const SizedBox(height: 12),
+              _StatusBanner(client: client),
               Expanded(child: body),
               const SizedBox(height: 6),
               _BottomNav(tab: _tab, onChanged: (t) {
@@ -119,6 +120,52 @@ class _HomeShellState extends State<HomeShell> {
   }
 }
 
+/// Shows when the PC is locked or the link is being re-established.
+class _StatusBanner extends StatelessWidget {
+  final RemoteClient client;
+  const _StatusBanner({required this.client});
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: Listenable.merge([client, client.pcLocked]),
+        builder: (context, _) {
+          final reconnecting = client.status == ConnectionStatus.reconnecting;
+          final locked = client.pcLocked.value;
+          if (!reconnecting && !locked) return const SizedBox.shrink();
+          final color = reconnecting ? T.danger : const Color(0xFFFFD166);
+          final text = reconnecting
+              ? 'Connection lost — reconnecting…'
+              : '${client.pcName} is locked. Its OS blocks remote input on the lock screen; unlock it at the PC.';
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.10),
+                borderRadius: T.r12,
+                border: Border.all(color: color.withValues(alpha: 0.5)),
+              ),
+              child: Row(
+                children: [
+                  if (reconnecting)
+                    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.5, color: color))
+                  else
+                    Icon(Icons.lock_outline, size: 16, color: color),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(text, style: TextStyle(fontSize: 12, color: color, height: 1.3))),
+                  if (reconnecting)
+                    GestureDetector(
+                      onTap: client.cancelReconnect,
+                      child: const Text('GIVE UP', style: TextStyle(fontFamily: T.mono, fontSize: 10, color: T.text2, letterSpacing: 1)),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+}
+
 class _Header extends StatelessWidget {
   final RemoteClient client;
   final VoidCallback onSettings;
@@ -127,7 +174,7 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
         children: [
-          const StatusDot(),
+          StatusDot(color: client.isConnected ? T.accent : T.danger),
           const SizedBox(width: 10),
           Expanded(
             child: Column(

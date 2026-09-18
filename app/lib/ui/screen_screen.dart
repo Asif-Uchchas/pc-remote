@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -6,12 +5,13 @@ import '../remote_client.dart';
 import '../screen_stream.dart';
 import '../settings.dart';
 import '../theme.dart';
-import 'touchpad.dart';
+import 'live_view.dart';
 import 'widgets.dart';
 
 enum Quality { smooth, balanced, sharp }
 
-/// Live view of the PC screen with tap-to-click.
+/// Live view of the PC screen with direct-touch control.
+/// Rotating the phone to landscape opens the immersive fullscreen view.
 class ScreenScreen extends StatefulWidget {
   final RemoteClient client;
   final Settings settings;
@@ -21,18 +21,20 @@ class ScreenScreen extends StatefulWidget {
   State<ScreenScreen> createState() => _ScreenScreenState();
 }
 
-class _ScreenScreenState extends State<ScreenScreen> {
+class _ScreenScreenState extends State<ScreenScreen> with WidgetsBindingObserver {
   ScreenStream? _stream;
   Quality _quality = Quality.balanced;
   int _monitor = 1;
   List<Map<String, dynamic>> _monitors = const [];
-  final _viewer = TransformationController();
+  bool _fullscreenOpen = false;
+  bool _paused = false;
 
   bool get _supported => widget.client.serverSupports('screen');
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (_supported) _init();
   }
 
@@ -58,37 +60,80 @@ class _ScreenScreenState extends State<ScreenScreen> {
     await s.start(fpsTarget: fps, width: w, quality: q, monitor: _monitor);
   }
 
+  // Stop streaming while the app is in the background (battery + bandwidth).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final bg = state != AppLifecycleState.resumed;
+    if (bg && !_paused) {
+      _paused = true;
+      _stream?.stop();
+    } else if (!bg && _paused) {
+      _paused = false;
+      if (widget.client.isConnected) _restart();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stream?.dispose();
-    _viewer.dispose();
     super.dispose();
   }
 
-  void _tap(TapUpDetails d, Size box, String button) {
-    // Position within the (possibly zoomed) image, as 0..1 fractions.
-    final scenePoint = _viewer.toScene(d.localPosition);
-    final fx = (scenePoint.dx / box.width).clamp(0.0, 1.0);
-    final fy = (scenePoint.dy / box.height).clamp(0.0, 1.0);
-    widget.client.clickAt(fx, fy, monitor: _monitor, button: button);
-    HapticFeedback.lightImpact();
+  double get _aspect {
+    final mon = _monitors.where((m) => m['index'] == _monitor).firstOrNull;
+    return mon == null ? 16 / 9 : (mon['w'] as num) / (mon['h'] as num);
+  }
+
+  Future<void> _openFullscreen({bool fromRotation = false}) async {
+    final stream = _stream;
+    if (stream == null || _fullscreenOpen) return;
+    _fullscreenOpen = true;
+    HapticFeedback.selectionClick();
+    await Navigator.of(context).push(PageRouteBuilder<void>(
+      opaque: true,
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (_, a, _) => FadeTransition(
+        opacity: a,
+        child: FullscreenLiveView(
+          client: widget.client,
+          stream: stream,
+          monitor: _monitor,
+          aspect: _aspect,
+          haptics: widget.settings.haptics,
+          onRetry: _restart,
+          exitOnPortrait: fromRotation,
+        ),
+      ),
+    ));
+    _fullscreenOpen = false;
   }
 
   @override
   Widget build(BuildContext context) {
     if (!_supported) {
-      return const Center(
+      final linux = widget.client.pcIsLinux;
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text('Screen preview needs the mss and Pillow packages on the PC:\npip install mss Pillow',
-              textAlign: TextAlign.center, style: TextStyle(color: T.muted, height: 1.6)),
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            linux
+                ? 'Screen preview needs grim on the PC (Wayland):\nsudo pacman -S grim'
+                : 'Screen preview needs the mss and Pillow packages on the PC:\npip install mss Pillow',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: T.muted, height: 1.6),
+          ),
         ),
       );
     }
     final stream = _stream;
-    final mon = _monitors.where((m) => m['index'] == _monitor).firstOrNull;
-    final aspect = mon == null ? 16 / 9 : (mon['w'] as num) / (mon['h'] as num);
     final (fps, w, _) = _params;
+
+    // Landscape -> go immersive automatically.
+    final landscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    if (landscape && !_fullscreenOpen && stream != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openFullscreen(fromRotation: true));
+    }
 
     return Column(
       children: [
@@ -109,98 +154,79 @@ class _ScreenScreenState extends State<ScreenScreen> {
                 ),
         ),
         const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: T.r12,
-          child: Container(
-            decoration: BoxDecoration(borderRadius: T.r12, border: Border.all(color: T.line2)),
-            child: AspectRatio(
-              aspectRatio: aspect,
-              child: LayoutBuilder(
-                builder: (ctx, c) {
-                  final box = Size(c.maxWidth, c.maxHeight);
-                  return stream == null
-                      ? const SizedBox()
-                      : ValueListenableBuilder<String?>(
-                          valueListenable: stream.error,
-                          builder: (_, err, _) => err != null
-                              ? Center(
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(err, style: const TextStyle(color: T.muted, fontSize: 12)),
-                                      const SizedBox(height: 8),
-                                      ConsoleButton(height: 36, onTap: _restart, child: const Text('RETRY')),
-                                    ],
-                                  ),
-                                )
-                              : InteractiveViewer(
-                                  transformationController: _viewer,
-                                  minScale: 1,
-                                  maxScale: 5,
-                                  child: GestureDetector(
-                                    onTapUp: (d) => _tap(d, box, 'left'),
-                                    onLongPressEnd: (d) => _tap(TapUpDetails(kind: PointerDeviceKind.touch, localPosition: d.localPosition, globalPosition: d.globalPosition), box, 'right'),
-                                    child: ValueListenableBuilder<Uint8List?>(
-                                      valueListenable: stream.frame,
-                                      builder: (_, bytes, _) => bytes == null
-                                          ? const ColoredBox(
-                                              color: T.surface,
-                                              child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: T.accent))),
-                                            )
-                                          : Image.memory(
-                                              bytes,
-                                              gaplessPlayback: true,
-                                              fit: BoxFit.fill,
-                                              width: box.width,
-                                              height: box.height,
-                                            ),
-                                    ),
-                                  ),
-                                ),
-                        );
+        Expanded(
+          child: ClipRRect(
+            borderRadius: T.r12,
+            child: Container(
+              decoration: BoxDecoration(color: T.bg, borderRadius: T.r12, border: Border.all(color: T.line2)),
+              child: stream == null
+                  ? const SizedBox()
+                  : Stack(
+                      children: [
+                        Positioned.fill(
+                          child: LiveView(
+                            client: widget.client,
+                            stream: stream,
+                            monitor: _monitor,
+                            aspect: _aspect,
+                            haptics: widget.settings.haptics,
+                            onRetry: _restart,
+                          ),
+                        ),
+                        Positioned(
+                          right: 8,
+                          bottom: 8,
+                          child: Material(
+                            color: T.surface2.withValues(alpha: 0.85),
+                            borderRadius: T.r10,
+                            child: InkWell(
+                              borderRadius: T.r10,
+                              onTap: _openFullscreen,
+                              child: const Padding(
+                                padding: EdgeInsets.all(8),
+                                child: Icon(Icons.fullscreen, size: 20, color: T.text),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Finger = pointer · tap = click · hold = drag · 2 fingers = right-click / scroll · rotate for fullscreen',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 11, color: T.muted, height: 1.4),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Segmented<Quality>(
+                options: const [(Quality.smooth, 'Smooth'), (Quality.balanced, 'Balanced'), (Quality.sharp, 'Sharp')],
+                value: _quality,
+                onChanged: (q) {
+                  setState(() => _quality = q);
+                  _restart();
                 },
               ),
             ),
-          ),
-        ),
-        const SizedBox(height: 6),
-        const Text('Tap the preview to click there · long-press for right-click · pinch to zoom',
-            textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: T.muted)),
-        const SizedBox(height: 10),
-        const SectionLabel('Quality'),
-        const SizedBox(height: 6),
-        Segmented<Quality>(
-          options: const [(Quality.smooth, 'Smooth'), (Quality.balanced, 'Balanced'), (Quality.sharp, 'Sharp')],
-          value: _quality,
-          onChanged: (q) {
-            setState(() => _quality = q);
-            _restart();
-          },
-        ),
-        if (_monitors.length > 1) ...[
-          const SizedBox(height: 10),
-          const SectionLabel('Monitor'),
-          const SizedBox(height: 6),
-          Segmented<int>(
-            options: [for (final m in _monitors) (m['index'] as int, '${m['index']} · ${m['w']}×${m['h']}')],
-            value: _monitor,
-            onChanged: (i) {
-              setState(() => _monitor = i);
-              _restart();
-            },
-          ),
-        ],
-        const SizedBox(height: 10),
-        Expanded(
-          child: ListenableBuilder(
-            listenable: widget.settings,
-            builder: (_, _) => Touchpad(
-              client: widget.client,
-              sensitivity: widget.settings.sensitivity,
-              scrollSensitivity: widget.settings.scrollSensitivity,
-              haptics: widget.settings.haptics,
-            ),
-          ),
+            if (_monitors.length > 1) ...[
+              const SizedBox(width: 8),
+              Expanded(
+                child: Segmented<int>(
+                  options: [for (final m in _monitors) (m['index'] as int, 'Mon ${m['index']}')],
+                  value: _monitor,
+                  onChanged: (i) {
+                    setState(() => _monitor = i);
+                    _restart();
+                  },
+                ),
+              ),
+            ],
+          ],
         ),
       ],
     );

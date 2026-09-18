@@ -8,39 +8,111 @@ import 'touchpad.dart';
 import 'widgets.dart';
 
 /// Touchpad tab. With [keyboard] the live typing field is shown (the "Keys" tab).
-class PadScreen extends StatelessWidget {
+class PadScreen extends StatefulWidget {
   final RemoteClient client;
   final Settings settings;
   final bool keyboard;
   const PadScreen({super.key, required this.client, required this.settings, required this.keyboard});
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-        listenable: settings,
-        builder: (context, _) => Column(
-          children: [
+  State<PadScreen> createState() => _PadScreenState();
+}
+
+class _PadScreenState extends State<PadScreen> {
+  /// Sticky modifiers: applied to the next key chip / typed character.
+  final Set<String> _mods = {};
+
+  void _toggleMod(String m) {
+    HapticFeedback.selectionClick();
+    setState(() => _mods.contains(m) ? _mods.remove(m) : _mods.add(m));
+  }
+
+  void _sendKey(String key, List<String> mods) {
+    widget.client.key(key, [...mods, ..._mods]);
+    if (_mods.isNotEmpty) setState(_mods.clear);
+  }
+
+  /// Typed text: with sticky modifiers active, each character becomes a
+  /// modifier+key press (e.g. Super + Enter) instead of plain text.
+  void _typed(String text) {
+    if (_mods.isEmpty) {
+      widget.client.typeText(text);
+      return;
+    }
+    for (final ch in text.characters) {
+      widget.client.key(ch == '\n' ? 'enter' : ch, _mods.toList());
+    }
+    setState(_mods.clear);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final client = widget.client;
+    final settings = widget.settings;
+    final superLabel = client.pcIsLinux ? 'SUPER' : (client.pcOs == 'macos' ? 'CMD' : 'WIN');
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (context, _) => Column(
+        children: [
+          Expanded(
+            child: Touchpad(
+              client: client,
+              sensitivity: settings.sensitivity,
+              scrollSensitivity: settings.scrollSensitivity,
+              haptics: settings.haptics,
+            ),
+          ),
+          const SizedBox(height: 10),
+          _MouseButtons(client: client),
+          const SizedBox(height: 10),
+          _ModifierRow(active: _mods, onToggle: _toggleMod, superLabel: superLabel),
+          const SizedBox(height: 8),
+          _KeyRow(onKey: _sendKey, superLabel: superLabel),
+          if (settings.showMedia && !widget.keyboard) ...[
+            const SizedBox(height: 10),
+            _MediaRow(client: client),
+          ],
+          if (widget.keyboard) ...[
+            const SizedBox(height: 10),
+            TypingField(client: client, onText: _typed, onEnter: () => _sendKey('enter', const [])),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// CTRL / ALT / SHIFT / SUPER toggles that stick until the next key.
+class _ModifierRow extends StatelessWidget {
+  final Set<String> active;
+  final ValueChanged<String> onToggle;
+  final String superLabel;
+  const _ModifierRow({required this.active, required this.onToggle, required this.superLabel});
+
+  @override
+  Widget build(BuildContext context) => Row(
+        children: [
+          for (final (m, label) in [('ctrl', 'CTRL'), ('alt', 'ALT'), ('shift', 'SHIFT'), ('win', superLabel)]) ...[
             Expanded(
-              child: Touchpad(
-                client: client,
-                sensitivity: settings.sensitivity,
-                scrollSensitivity: settings.scrollSensitivity,
-                haptics: settings.haptics,
+              child: GestureDetector(
+                onTap: () => onToggle(m),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: active.contains(m) ? T.accent : T.surface3,
+                    borderRadius: T.r10,
+                    border: Border.all(color: active.contains(m) ? T.accent : T.line2),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(label,
+                      style: TextStyle(fontFamily: T.mono, fontSize: 11, letterSpacing: 1, color: active.contains(m) ? T.bg : T.text3)),
+                ),
               ),
             ),
-            const SizedBox(height: 10),
-            _MouseButtons(client: client),
-            const SizedBox(height: 10),
-            _KeyRow(client: client),
-            if (settings.showMedia && !keyboard) ...[
-              const SizedBox(height: 10),
-              _MediaRow(client: client),
-            ],
-            if (keyboard) ...[
-              const SizedBox(height: 10),
-              TypingField(client: client),
-            ],
+            if (m != 'win') const SizedBox(width: 6),
           ],
-        ),
+        ],
       );
 }
 
@@ -124,8 +196,9 @@ class _HoldButtonState extends State<HoldButton> {
 }
 
 class _KeyRow extends StatelessWidget {
-  final RemoteClient client;
-  const _KeyRow({required this.client});
+  final void Function(String key, List<String> mods) onKey;
+  final String superLabel;
+  const _KeyRow({required this.onKey, required this.superLabel});
 
   static const _keys = <(String, String, List<String>)>[
     ('ESC', 'esc', []),
@@ -163,7 +236,7 @@ class _KeyRow extends StatelessWidget {
           separatorBuilder: (_, _) => const SizedBox(width: 6),
           itemBuilder: (_, i) {
             final (label, key, mods) = _keys[i];
-            return KeyChip(label, onTap: () => client.key(key, mods));
+            return KeyChip(label == 'WIN' ? superLabel : label, onTap: () => onKey(key, mods));
           },
         ),
       );
@@ -209,7 +282,9 @@ class _MediaRow extends StatelessWidget {
 /// A text field whose edits are streamed to the PC as keystrokes.
 class TypingField extends StatefulWidget {
   final RemoteClient client;
-  const TypingField({super.key, required this.client});
+  final ValueChanged<String>? onText;
+  final VoidCallback? onEnter;
+  const TypingField({super.key, required this.client, this.onText, this.onEnter});
 
   @override
   State<TypingField> createState() => _TypingFieldState();
@@ -241,7 +316,8 @@ class _TypingFieldState extends State<TypingField> {
     for (var i = 0; i < removed; i++) {
       widget.client.key('backspace');
     }
-    widget.client.typeText(now.substring(p));
+    final added = now.substring(p);
+    if (added.isNotEmpty) (widget.onText ?? widget.client.typeText)(added);
     _last = now;
   }
 
@@ -253,7 +329,7 @@ class _TypingFieldState extends State<TypingField> {
   }
 
   void _submit(String _) {
-    widget.client.key('enter');
+    (widget.onEnter ?? () => widget.client.key('enter'))();
     _clearSilently();
     _focus.requestFocus();
   }

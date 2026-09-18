@@ -10,7 +10,8 @@ class DiscoveredPc {
   final String name;
   final String host;
   final int port;
-  const DiscoveredPc({required this.name, required this.host, required this.port});
+  final String? mac;
+  const DiscoveredPc({required this.name, required this.host, required this.port, this.mac});
 
   @override
   bool operator ==(Object other) =>
@@ -40,6 +41,7 @@ Future<List<DiscoveredPc>> discoverPcs(
       name: parts[1],
       host: dg.address.address,
       port: int.tryParse(parts[2]) ?? 48889,
+      mac: parts.length > 3 && parts[3].isNotEmpty ? parts[3] : null,
     ));
   });
 

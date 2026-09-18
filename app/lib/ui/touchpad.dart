@@ -52,6 +52,9 @@ class _TouchpadState extends State<Touchpad> {
 
   Duration? _lastMoveTs;
   Timer? _holdTimer;
+  // Batch relative moves: at most one packet every 8 ms.
+  int _batchX = 0, _batchY = 0;
+  Timer? _batchTimer;
   bool _dragging = false;
 
   void _onDown(PointerDownEvent e) {
@@ -99,9 +102,11 @@ class _TouchpadState extends State<Touchpad> {
       final dx = _accX.truncate();
       final dy = _accY.truncate();
       if (dx != 0 || dy != 0) {
-        widget.client.move(dx, dy);
         _accX -= dx;
         _accY -= dy;
+        _batchX += dx;
+        _batchY += dy;
+        _batchTimer ??= Timer(const Duration(milliseconds: 8), _flushMoves);
       }
     } else if (_pointers.length == 2) {
       // Use the average vertical movement of the two fingers.
@@ -118,10 +123,20 @@ class _TouchpadState extends State<Touchpad> {
     }
   }
 
+  void _flushMoves() {
+    _batchTimer = null;
+    if (_batchX != 0 || _batchY != 0) {
+      widget.client.move(_batchX, _batchY);
+      _batchX = _batchY = 0;
+    }
+  }
+
   void _onUp(PointerEvent e) {
     _pointers.remove(e.pointer);
     if (_pointers.isNotEmpty) return;
     _holdTimer?.cancel();
+    _batchTimer?.cancel();
+    _flushMoves();
 
     final now = DateTime.now();
     final downTime = _downTime;
@@ -149,6 +164,7 @@ class _TouchpadState extends State<Touchpad> {
   @override
   void dispose() {
     _holdTimer?.cancel();
+    _batchTimer?.cancel();
     if (_dragging) widget.client.buttonUp('left');
     super.dispose();
   }

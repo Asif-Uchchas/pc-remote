@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../discovery.dart';
+import '../known_pcs.dart';
 import '../remote_client.dart';
 import '../theme.dart';
 import 'widgets.dart';
@@ -21,7 +22,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final _pinFocus = FocusNode();
 
   List<DiscoveredPc> _found = [];
+  List<KnownPc> _known = [];
   String? _selectedHost;
+  String? _waking;
   bool _scanning = false;
   bool _connecting = false;
   bool _manual = false;
@@ -39,6 +42,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     _port.text = p.getString('port') ?? '48889';
     _pin.text = p.getString('pin') ?? '';
     _selectedHost = _host.text.isEmpty ? null : _host.text;
+    _known = await KnownPcs.load();
     if (mounted) setState(() {});
   }
 
@@ -83,9 +87,39 @@ class _ConnectScreenState extends State<ConnectScreen> {
     setState(() => _connecting = true);
     await _savePrefs();
     final ok = await widget.client.connect(host: host, port: port, pin: pin);
+    if (ok) {
+      await KnownPcs.remember(KnownPc(
+        name: widget.client.pcName,
+        host: host,
+        port: port,
+        mac: widget.client.pcMac ?? _found.where((p) => p.host == host).firstOrNull?.mac,
+        lastUsed: DateTime.now(),
+      ));
+    }
     if (!mounted) return;
     setState(() => _connecting = false);
     if (!ok) showSnack(context, widget.client.errorMessage);
+  }
+
+  Future<void> _wake(KnownPc pc) async {
+    if (pc.mac == null) return;
+    setState(() => _waking = pc.host);
+    try {
+      await wakeOnLan(pc.mac!, host: pc.host);
+      if (!mounted) return;
+      showSnack(context, 'Wake packet sent to ${pc.name}. Give it ~20 s, then rescan.');
+      // Poll discovery for a while so the PC shows up as soon as it is back.
+      for (var i = 0; i < 6 && mounted; i++) {
+        await Future<void>.delayed(const Duration(seconds: 5));
+        if (!mounted) return;
+        await _scan();
+        if (_found.any((f) => f.host == pc.host)) break;
+      }
+    } catch (e) {
+      if (mounted) showSnack(context, 'Could not send wake packet: $e');
+    } finally {
+      if (mounted) setState(() => _waking = null);
+    }
   }
 
   @override
@@ -100,6 +134,9 @@ class _ConnectScreenState extends State<ConnectScreen> {
   String get _targetName {
     for (final pc in _found) {
       if (pc.host == _selectedHost) return pc.name;
+    }
+    for (final k in _known) {
+      if (k.host == _selectedHost) return k.name;
     }
     return _host.text.trim();
   }
@@ -148,7 +185,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
               Expanded(
                 child: ListView(
                   children: [
-                    if (_found.isEmpty && !_scanning)
+                    if (_found.isEmpty && _known.isEmpty && !_scanning)
                       Panel(
                         child: const Text(
                           'No PC found yet. Make sure server.py is running on the PC and allowed through the firewall, then rescan — or enter the address manually.',
@@ -157,6 +194,21 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       ),
                     for (final pc in _found) ...[
                       _PcRow(pc: pc, selected: pc.host == _selectedHost, onTap: () => _select(pc)),
+                      const SizedBox(height: 8),
+                    ],
+                    for (final k in _known.where((k) => !_found.any((f) => f.host == k.host))) ...[
+                      _OfflineRow(
+                        pc: k,
+                        waking: _waking == k.host,
+                        selected: k.host == _selectedHost,
+                        onTap: () => _select(DiscoveredPc(name: k.name, host: k.host, port: k.port, mac: k.mac)),
+                        onWake: k.mac == null ? null : () => _wake(k),
+                        onForget: () async {
+                          await KnownPcs.forget(k.host);
+                          _known = await KnownPcs.load();
+                          if (mounted) setState(() {});
+                        },
+                      ),
                       const SizedBox(height: 8),
                     ],
                     if (!_manual)
@@ -350,4 +402,70 @@ class _PinField extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A remembered PC that discovery did not find: offer Wake-on-LAN.
+class _OfflineRow extends StatelessWidget {
+  final KnownPc pc;
+  final bool waking;
+  final bool selected;
+  final VoidCallback onTap;
+  final VoidCallback? onWake;
+  final VoidCallback onForget;
+  const _OfflineRow({
+    required this.pc,
+    required this.waking,
+    required this.selected,
+    required this.onTap,
+    required this.onWake,
+    required this.onForget,
+  });
+
+  @override
+  Widget build(BuildContext context) => Material(
+        color: T.surface,
+        borderRadius: T.r12,
+        child: InkWell(
+          borderRadius: T.r12,
+          onTap: onTap,
+          onLongPress: onForget,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: T.r12,
+              border: Border.all(color: selected ? T.accent : T.line),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(color: T.surface2, borderRadius: T.r10, border: Border.all(color: T.line)),
+                  child: const Icon(Icons.desktop_windows_outlined, size: 20, color: T.dim),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(pc.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: T.text3)),
+                      const SizedBox(height: 2),
+                      Text('${pc.host} · offline', style: T.monoSmall),
+                    ],
+                  ),
+                ),
+                if (onWake != null)
+                  ConsoleButton(
+                    height: 36,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    onTap: waking ? null : onWake,
+                    child: waking
+                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.5, color: T.accent))
+                        : const Row(children: [Icon(Icons.power_settings_new, size: 14), SizedBox(width: 6), Text('WAKE', style: TextStyle(fontSize: 11))]),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      );
 }

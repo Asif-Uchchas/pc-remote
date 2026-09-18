@@ -6,7 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 /// Connection lifecycle as seen by the UI.
-enum ConnectionStatus { disconnected, connecting, connected, error }
+enum ConnectionStatus { disconnected, connecting, connected, reconnecting, error }
 
 /// TCP client for the newline-delimited JSON protocol implemented by
 /// `server/server.py`.
@@ -27,6 +27,14 @@ class RemoteClient extends ChangeNotifier {
   /// Round-trip time of the last ping, in milliseconds (-1 = unknown).
   final ValueNotifier<int> latencyMs = ValueNotifier(-1);
 
+  /// True while the PC sits on its lock screen (input is blocked by the OS).
+  final ValueNotifier<bool> pcLocked = ValueNotifier(false);
+
+  String _deviceName = 'Android';
+  bool _wantReconnect = false;
+  Timer? _reconnectTimer;
+  bool _paused = false;
+
   // Request/response bookkeeping: each request carries an "id"; the server
   // echoes it back on the reply.
   int _nextId = 1;
@@ -42,6 +50,12 @@ class RemoteClient extends ChangeNotifier {
 
   /// Capabilities reported by the server in its hello reply.
   Map<String, dynamic> get serverInfo => _serverInfo;
+
+  /// "windows", "macos", "hyprland", "linux-wayland", "linux-x11".
+  String get pcOs => (_serverInfo['os'] as String?)?.toLowerCase() ?? 'windows';
+  bool get pcIsLinux => pcOs.startsWith('linux') || pcOs == 'hyprland';
+  String? get pcMac => _serverInfo['mac'] as String?;
+  List<String> get serverNotes => ((_serverInfo['notes'] as List?) ?? const []).cast<String>();
   bool serverSupports(String feature) =>
       (_serverInfo['features'] as List?)?.contains(feature) ?? false;
 
@@ -62,7 +76,14 @@ class RemoteClient extends ChangeNotifier {
     _host = host;
     _port = port;
     _pin = pin;
+    _deviceName = deviceName;
+    _wantReconnect = true;
     _set(ConnectionStatus.connecting);
+    return _open();
+  }
+
+  Future<bool> _open() async {
+    final host = _host, port = _port, pin = _pin, deviceName = _deviceName;
     try {
       final socket = await Socket.connect(host, port, timeout: const Duration(seconds: 4));
       socket.setOption(SocketOption.tcpNoDelay, true);
@@ -85,6 +106,7 @@ class RemoteClient extends ChangeNotifier {
 
       _socket = socket;
       _serverInfo = reply;
+      pcLocked.value = reply['locked'] == true;
       _sub = lines.listen(
         _onLine,
         onDone: () => _onLost('Server disconnected'),
@@ -117,26 +139,85 @@ class RemoteClient extends ChangeNotifier {
       _pending.remove(id)!.complete(msg);
       return;
     }
-    if (msg['t'] == 'pong' && _pingSentAt != null) {
-      latencyMs.value = DateTime.now().difference(_pingSentAt!).inMilliseconds;
-      _pingSentAt = null;
+    if (msg['t'] == 'pong') {
+      if (_pingSentAt != null) {
+        latencyMs.value = DateTime.now().difference(_pingSentAt!).inMilliseconds;
+        _pingSentAt = null;
+      }
+      if (msg.containsKey('locked')) pcLocked.value = msg['locked'] == true;
     }
   }
 
   void _sendPing() {
-    if (_pingSentAt != null) return; // one in flight
+    if (_paused) return;
+    if (_pingSentAt != null) {
+      // Previous ping never answered: connection is probably dead.
+      if (DateTime.now().difference(_pingSentAt!).inSeconds > 8) _onLost('PC stopped responding');
+      return;
+    }
     _pingSentAt = DateTime.now();
     _send({'t': 'ping'});
   }
 
   void _onLost(String reason) {
     _closeSocket();
-    if (_status == ConnectionStatus.connected) {
-      _set(ConnectionStatus.error, error: reason);
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    _pingSentAt = null;
+    latencyMs.value = -1;
+    for (final c in _pending.values) {
+      if (!c.isCompleted) c.completeError(StateError('disconnected'));
+    }
+    _pending.clear();
+    if (_status == ConnectionStatus.connected || _status == ConnectionStatus.reconnecting) {
+      if (_wantReconnect) {
+        _status = ConnectionStatus.reconnecting;
+        _errorMessage = reason;
+        notifyListeners();
+        _scheduleReconnect();
+      } else {
+        _set(ConnectionStatus.error, error: reason);
+      }
+    }
+  }
+
+  void _scheduleReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 3), () async {
+      if (!_wantReconnect || _status != ConnectionStatus.reconnecting) return;
+      if (_paused) {
+        _scheduleReconnect();
+        return;
+      }
+      final ok = await _open();
+      if (!ok && _wantReconnect) {
+        _status = ConnectionStatus.reconnecting;
+        notifyListeners();
+        _scheduleReconnect();
+      }
+    });
+  }
+
+  /// Give up reconnecting and go back to the connect screen.
+  void cancelReconnect() {
+    _wantReconnect = false;
+    _reconnectTimer?.cancel();
+    _set(ConnectionStatus.disconnected);
+  }
+
+  /// App went to background / foreground. While paused, pings and
+  /// reconnect attempts stop so the radio can sleep.
+  void setPaused(bool paused) {
+    _paused = paused;
+    if (!paused) {
+      if (_status == ConnectionStatus.reconnecting) _scheduleReconnect();
+      if (isConnected) _sendPing();
     }
   }
 
   Future<void> disconnect() async {
+    _wantReconnect = false;
+    _reconnectTimer?.cancel();
     _pingTimer?.cancel();
     _pingTimer = null;
     await _sub?.cancel();
@@ -208,8 +289,15 @@ class RemoteClient extends ChangeNotifier {
       _send({'t': 'key', 'k': name, 'mods': mods});
 
   /// Click at a fractional position (0..1) on a monitor.
-  void clickAt(double fx, double fy, {int monitor = 1, String button = 'left'}) =>
-      _send({'t': 'click_at', 'x': fx, 'y': fy, 'mon': monitor, 'b': button});
+  void clickAt(double fx, double fy, {int monitor = 1, String button = 'left', int count = 1}) =>
+      _send({'t': 'click_at', 'x': fx, 'y': fy, 'mon': monitor, 'b': button, 'n': count});
+
+  /// Move the pointer to a fractional position (0..1) on a monitor.
+  void moveAbs(double fx, double fy, {int monitor = 1}) =>
+      _send({'t': 'mv_abs', 'x': fx, 'y': fy, 'mon': monitor});
+
+  void keyDown(String name) => _send({'t': 'key_down', 'k': name});
+  void keyUp(String name) => _send({'t': 'key_up', 'k': name});
 
   // ---- Apps & system ---------------------------------------------------
 
@@ -277,6 +365,7 @@ class RemoteClient extends ChangeNotifier {
   void dispose() {
     disconnect();
     latencyMs.dispose();
+    pcLocked.dispose();
     super.dispose();
   }
 }

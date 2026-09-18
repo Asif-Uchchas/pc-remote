@@ -3,3 +3,6 @@ pystray>=0.19.5
 Pillow>=10.0
 mss>=9.0
 pyperclip>=1.8
+psutil>=5.9
+# Linux/Wayland only (Hyprland, Sway, GNOME, KDE): virtual input device
+evdev>=1.6; sys_platform == "linux"

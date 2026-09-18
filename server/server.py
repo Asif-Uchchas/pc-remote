@@ -10,10 +10,8 @@ server pushes JPEG frames as <4-byte big-endian length><bytes>.
 
 import base64
 import glob
-import io
 import json
 import os
-import platform
 import random
 import secrets
 import socket
@@ -23,15 +21,10 @@ import sys
 import threading
 import time
 
-from pynput.keyboard import Controller as KeyboardController, Key
-from pynput.mouse import Button, Controller as MouseController
-
-try:
-    import mss
-    from PIL import Image
-    HAVE_SCREEN = True
-except ImportError:  # pragma: no cover
-    HAVE_SCREEN = False
+from capture import make_capture
+from inputs import make_backend
+from platform_util import (FROZEN, IS_HYPRLAND, IS_LINUX, IS_MAC, IS_WAYLAND, IS_WIN, desktop_name,
+                           is_locked, local_ips, mac_address, which)
 
 try:
     import pyperclip
@@ -39,26 +32,25 @@ try:
 except ImportError:  # pragma: no cover
     HAVE_CLIP = False
 
-FROZEN = getattr(sys, "frozen", False)
+VERSION = "1.1.0"
+DISCOVERY_PORT = 48888
+DEFAULT_TCP_PORT = 48889
+
 # Bundled resources (icon) live next to the script, or inside the PyInstaller bundle.
 RES_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 # Config lives next to the script when run from source; in a per-user folder when
 # packaged (the exe may sit somewhere read-only).
 if FROZEN:
-    CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Mobile Remote")
+    CONFIG_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~/.config"), "Mobile Remote")
 else:
     CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
-DISCOVERY_PORT = 48888
-DEFAULT_TCP_PORT = 48889
-IS_WIN = platform.system() == "Windows"
-IS_MAC = platform.system() == "Darwin"
 
-mouse = MouseController()
-keyboard = KeyboardController()
+inp, INPUT_NOTE = make_backend()
+cap, CAPTURE_NOTE = make_capture()
 
-FEATURES = ["apps", "system", "clipboard" if HAVE_CLIP else None, "files", "screen" if HAVE_SCREEN else None]
-FEATURES = [f for f in FEATURES if f]
+FEATURES = [f for f in ["apps", "system", "clipboard" if HAVE_CLIP else None, "files",
+                        "screen" if cap else None, "wol", "lock_state"] if f]
 
 
 # ---------------------------------------------------------------------------
@@ -87,53 +79,31 @@ def load_config():
 
 
 # ---------------------------------------------------------------------------
-# Key mapping
-# ---------------------------------------------------------------------------
-
-SPECIAL_KEYS = {
-    "enter": Key.enter, "backspace": Key.backspace, "tab": Key.tab, "esc": Key.esc,
-    "space": Key.space, "delete": Key.delete, "insert": Key.insert,
-    "home": Key.home, "end": Key.end, "pageup": Key.page_up, "pagedown": Key.page_down,
-    "up": Key.up, "down": Key.down, "left": Key.left, "right": Key.right,
-    "shift": Key.shift, "ctrl": Key.ctrl, "alt": Key.alt, "win": Key.cmd, "cmd": Key.cmd,
-    "capslock": Key.caps_lock, "printscreen": Key.print_screen,
-    "f1": Key.f1, "f2": Key.f2, "f3": Key.f3, "f4": Key.f4, "f5": Key.f5, "f6": Key.f6,
-    "f7": Key.f7, "f8": Key.f8, "f9": Key.f9, "f10": Key.f10, "f11": Key.f11, "f12": Key.f12,
-    "play_pause": Key.media_play_pause, "next": Key.media_next, "prev": Key.media_previous,
-    "vol_up": Key.media_volume_up, "vol_down": Key.media_volume_down, "mute": Key.media_volume_mute,
-}
-
-MODIFIERS = {"ctrl": Key.ctrl, "shift": Key.shift, "alt": Key.alt, "win": Key.cmd, "cmd": Key.cmd}
-BUTTONS = {"left": Button.left, "right": Button.right, "middle": Button.middle}
-
-
-def resolve_key(name):
-    name = str(name)
-    if name.lower() in SPECIAL_KEYS:
-        return SPECIAL_KEYS[name.lower()]
-    if len(name) == 1:
-        return name
-    raise ValueError(f"unknown key: {name}")
-
-
-def press_combo(key_name, mods):
-    key = resolve_key(key_name)
-    mod_keys = [MODIFIERS[m] for m in mods if m in MODIFIERS]
-    for m in mod_keys:
-        keyboard.press(m)
-    try:
-        keyboard.press(key)
-        keyboard.release(key)
-    finally:
-        for m in reversed(mod_keys):
-            keyboard.release(m)
-
-
-# ---------------------------------------------------------------------------
 # Apps & system
 # ---------------------------------------------------------------------------
 
 _apps_cache = {"at": 0, "apps": []}
+
+
+def _parse_desktop(path):
+    name, hidden = None, False
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            in_main = False
+            for line in f:
+                line = line.strip()
+                if line.startswith("["):
+                    in_main = line == "[Desktop Entry]"
+                    continue
+                if not in_main:
+                    continue
+                if line.startswith("Name=") and name is None:
+                    name = line[5:].strip()
+                elif line in ("NoDisplay=true", "Hidden=true"):
+                    hidden = True
+    except OSError:
+        return None, True
+    return name, hidden
 
 
 def list_apps():
@@ -159,17 +129,15 @@ def list_apps():
             for path in glob.glob(os.path.join(root, "*.app")):
                 found.setdefault(os.path.splitext(os.path.basename(path))[0], path)
     else:
-        for root in ("/usr/share/applications", os.path.expanduser("~/.local/share/applications")):
+        roots = ["/usr/share/applications", "/usr/local/share/applications",
+                 os.path.expanduser("~/.local/share/applications"),
+                 "/var/lib/flatpak/exports/share/applications",
+                 os.path.expanduser("~/.local/share/flatpak/exports/share/applications")]
+        for root in roots:
             for path in glob.glob(os.path.join(root, "*.desktop")):
-                name = os.path.splitext(os.path.basename(path))[0]
-                try:
-                    with open(path, encoding="utf-8", errors="ignore") as f:
-                        for line in f:
-                            if line.startswith("Name="):
-                                name = line[5:].strip()
-                                break
-                except OSError:
-                    pass
+                name, hidden = _parse_desktop(path)
+                if hidden or not name:
+                    continue
                 found.setdefault(name, path)
     apps = [{"name": n, "path": p} for n, p in sorted(found.items(), key=lambda kv: kv[0].lower())]
     _apps_cache.update(at=time.time(), apps=apps)
@@ -181,52 +149,64 @@ def launch(path):
         os.startfile(path)  # noqa: S606 - user-initiated launch of a Start Menu shortcut
     elif IS_MAC:
         subprocess.Popen(["open", path])
-    else:
-        if path.endswith(".desktop"):
+    elif path.endswith(".desktop"):
+        app_id = os.path.splitext(os.path.basename(path))[0]
+        if which("gtk-launch"):
+            subprocess.Popen(["gtk-launch", app_id])
+        elif which("gio"):
             subprocess.Popen(["gio", "launch", path])
         else:
             subprocess.Popen(["xdg-open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
 
 
 def system_action(action):
-    cmds = {
-        "lock": (["rundll32.exe", "user32.dll,LockWorkStation"] if IS_WIN else
-                 ["pmset", "displaysleepnow"] if IS_MAC else ["loginctl", "lock-session"]),
-        "sleep": (["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"] if IS_WIN else
-                  ["pmset", "sleepnow"] if IS_MAC else ["systemctl", "suspend"]),
-        "shutdown": (["shutdown", "/s", "/t", "5"] if IS_WIN else
-                     ["osascript", "-e", 'tell app "System Events" to shut down'] if IS_MAC else
-                     ["systemctl", "poweroff"]),
-        "restart": (["shutdown", "/r", "/t", "5"] if IS_WIN else
-                    ["osascript", "-e", 'tell app "System Events" to restart'] if IS_MAC else
-                    ["systemctl", "reboot"]),
-    }
+    if IS_WIN:
+        cmds = {
+            "lock": ["rundll32.exe", "user32.dll,LockWorkStation"],
+            "sleep": ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"],
+            "shutdown": ["shutdown", "/s", "/t", "5"],
+            "restart": ["shutdown", "/r", "/t", "5"],
+        }
+    elif IS_MAC:
+        cmds = {
+            "lock": ["pmset", "displaysleepnow"],
+            "sleep": ["pmset", "sleepnow"],
+            "shutdown": ["osascript", "-e", 'tell app "System Events" to shut down'],
+            "restart": ["osascript", "-e", 'tell app "System Events" to restart'],
+        }
+    else:
+        lock = ["hyprlock"] if IS_HYPRLAND and which("hyprlock") else ["loginctl", "lock-session"]
+        cmds = {
+            "lock": lock,
+            "sleep": ["systemctl", "suspend"],
+            "shutdown": ["systemctl", "poweroff"],
+            "restart": ["systemctl", "reboot"],
+        }
     if action not in cmds:
         raise ValueError(f"unknown system action {action!r}")
-    subprocess.Popen(cmds[action])
+    subprocess.Popen(cmds[action], start_new_session=True)
 
 
 # ---------------------------------------------------------------------------
 # Screen
 # ---------------------------------------------------------------------------
 
-def monitors():
-    if not HAVE_SCREEN:
-        return []
-    with mss.MSS() as sct:
-        # index 0 is the virtual "all monitors" rectangle
-        return [{"index": i, "w": m["width"], "h": m["height"], "x": m["left"], "y": m["top"]}
-                for i, m in enumerate(sct.monitors) if i > 0]
+def _abs_point(fx, fy, mon):
+    left, top, w, h = cap.monitor_rect(mon) if cap else (0, 0, 1920, 1080)
+    return int(left + fx * w), int(top + fy * h)
 
 
-def click_at(fx, fy, mon, button):
-    with mss.MSS() as sct:
-        m = sct.monitors[max(1, min(mon, len(sct.monitors) - 1))]
-    x = int(m["left"] + fx * m["width"])
-    y = int(m["top"] + fy * m["height"])
-    mouse.position = (x, y)
+def move_abs(fx, fy, mon):
+    x, y = _abs_point(fx, fy, mon)
+    inp.move_to(x, y)
+
+
+def click_at(fx, fy, mon, button, n=1):
+    move_abs(fx, fy, mon)
     time.sleep(0.02)
-    mouse.click(BUTTONS.get(button, Button.left), 1)
+    inp.click(button, n)
 
 
 def stream_frames(conn, params, stop):
@@ -235,27 +215,11 @@ def stream_frames(conn, params, stop):
     width = max(320, min(int(params.get("w", 1280)), 1920))
     quality = max(20, min(int(params.get("q", 60)), 90))
     mon = int(params.get("mon", 1))
-    interval = 1.0 / fps
-    with mss.MSS() as sct:
-        m = sct.monitors[max(1, min(mon, len(sct.monitors) - 1))]
-        scale = min(1.0, width / m["width"])
-        size = (int(m["width"] * scale), int(m["height"] * scale))
-        while not stop.is_set():
-            t0 = time.time()
-            shot = sct.grab(m)
-            img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
-            if scale < 1.0:
-                img = img.resize(size, Image.BILINEAR)
-            buf = io.BytesIO()
-            img.save(buf, "JPEG", quality=quality, optimize=False)
-            data = buf.getvalue()
-            try:
-                conn.sendall(struct.pack(">I", len(data)) + data)
-            except OSError:
-                return
-            dt = time.time() - t0
-            if dt < interval:
-                time.sleep(interval - dt)
+    for data in cap.frames(mon, width, quality, stop, 1.0 / fps):
+        try:
+            conn.sendall(struct.pack(">I", len(data)) + data)
+        except OSError:
+            return
 
 
 # ---------------------------------------------------------------------------
@@ -304,26 +268,46 @@ def file_end(token):
 # Message handling
 # ---------------------------------------------------------------------------
 
+_lock_cache = {"at": 0.0, "locked": False}
+
+
+def locked_state():
+    if time.time() - _lock_cache["at"] > 1.0:
+        try:
+            _lock_cache["locked"] = is_locked()
+        except Exception:  # noqa: BLE001
+            _lock_cache["locked"] = False
+        _lock_cache["at"] = time.time()
+    return _lock_cache["locked"]
+
+
 def handle(msg, cfg):
     t = msg.get("t")
     if t == "mv":
-        mouse.move(int(msg.get("dx", 0)), int(msg.get("dy", 0)))
+        inp.move(int(msg.get("dx", 0)), int(msg.get("dy", 0)))
+    elif t == "mv_abs":
+        move_abs(float(msg.get("x", 0.5)), float(msg.get("y", 0.5)), int(msg.get("mon", 1)))
     elif t == "click":
-        mouse.click(BUTTONS.get(msg.get("b", "left"), Button.left), int(msg.get("n", 1)))
+        inp.click(msg.get("b", "left"), int(msg.get("n", 1)))
     elif t == "down":
-        mouse.press(BUTTONS.get(msg.get("b", "left"), Button.left))
+        inp.press(msg.get("b", "left"))
     elif t == "up":
-        mouse.release(BUTTONS.get(msg.get("b", "left"), Button.left))
+        inp.release(msg.get("b", "left"))
     elif t == "scroll":
-        mouse.scroll(int(msg.get("dx", 0)), int(msg.get("dy", 0)))
+        inp.scroll(int(msg.get("dx", 0)), int(msg.get("dy", 0)))
     elif t == "text":
-        keyboard.type(str(msg.get("s", "")))
+        inp.type_text(str(msg.get("s", "")))
     elif t == "key":
-        press_combo(msg.get("k", ""), msg.get("mods", []))
+        inp.combo(msg.get("k", ""), msg.get("mods", []))
+    elif t == "key_down":
+        inp.key_down(msg.get("k", ""))
+    elif t == "key_up":
+        inp.key_up(msg.get("k", ""))
     elif t == "click_at":
-        click_at(float(msg.get("x", 0.5)), float(msg.get("y", 0.5)), int(msg.get("mon", 1)), msg.get("b", "left"))
+        click_at(float(msg.get("x", 0.5)), float(msg.get("y", 0.5)), int(msg.get("mon", 1)),
+                 msg.get("b", "left"), int(msg.get("n", 1)))
     elif t == "ping":
-        return {"t": "pong"}
+        return {"t": "pong", "locked": locked_state()}
     elif t == "apps":
         return {"t": "ok", "apps": list_apps()}
     elif t == "launch":
@@ -333,7 +317,7 @@ def handle(msg, cfg):
         system_action(str(msg.get("action", "")))
         return {"t": "ok"}
     elif t == "monitors":
-        return {"t": "ok", "monitors": monitors()}
+        return {"t": "ok", "monitors": cap.monitors() if cap else []}
     elif t == "clip_get":
         if not HAVE_CLIP:
             return {"t": "err", "msg": "pyperclip not installed"}
@@ -352,6 +336,19 @@ def handle(msg, cfg):
     else:
         return {"t": "err", "msg": f"unknown type {t!r}"}
     return None
+
+
+def hello_reply(cfg):
+    return {
+        "t": "ok",
+        "name": cfg["name"],
+        "features": FEATURES,
+        "os": desktop_name(),
+        "mac": mac_address(),
+        "version": VERSION,
+        "locked": locked_state(),
+        "notes": [n for n in (INPUT_NOTE, CAPTURE_NOTE) if n],
+    }
 
 
 def client_thread(conn, addr, cfg):
@@ -389,9 +386,9 @@ def client_thread(conn, addr, cfg):
                     if msg.get("t") == "hello" and str(msg.get("pin", "")) == str(cfg["pin"]):
                         authed = True
                         print(f"[tcp] {peer} authenticated ({msg.get('name', 'unknown device')}, mode={msg.get('mode', 'control')})")
-                        send({"t": "ok", "name": cfg["name"], "features": FEATURES, "os": platform.system()})
+                        send(hello_reply(cfg))
                         if msg.get("mode") == "stream":
-                            if not HAVE_SCREEN:
+                            if not cap:
                                 return
                             stream_stop = threading.Event()
                             conn.settimeout(None)
@@ -403,7 +400,6 @@ def client_thread(conn, addr, cfg):
                     continue
 
                 if stream_stop is not None:
-                    # Streaming connection only understands "stop".
                     if msg.get("t") == "stream_stop":
                         stream_stop.set()
                         return
@@ -444,7 +440,7 @@ def discovery_server(cfg):
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("0.0.0.0", DISCOVERY_PORT))
     print(f"[udp] discovery listening on port {DISCOVERY_PORT}")
-    reply = f"PCREMOTE_HERE_V1|{cfg['name']}|{cfg['port']}".encode("utf-8")
+    reply = f"PCREMOTE_HERE_V1|{cfg['name']}|{cfg['port']}|{mac_address()}".encode("utf-8")
     while True:
         try:
             data, addr = sock.recvfrom(1024)
@@ -454,30 +450,13 @@ def discovery_server(cfg):
             time.sleep(0.1)
 
 
-def local_ips():
-    ips = set()
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ips.add(info[4][0])
-    except socket.gaierror:
-        pass
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ips.add(s.getsockname()[0])
-        s.close()
-    except OSError:
-        pass
-    return sorted(ip for ip in ips if not ip.startswith("127."))
-
-
 # ---------------------------------------------------------------------------
 # Info dialog, autostart, tray icon
 # ---------------------------------------------------------------------------
 
 def info_text(cfg):
     ips = ", ".join(local_ips()) or "unknown"
-    return "\n".join([
+    lines = [
         f"Name:  {cfg['name']}",
         f"PIN:   {cfg['pin']}",
         f"IP:    {ips}",
@@ -485,7 +464,11 @@ def info_text(cfg):
         "",
         "Open Mobile Remote on your phone, pick this PC and enter the PIN.",
         f"Settings file: {CONFIG_PATH}",
-    ])
+    ]
+    for n in (INPUT_NOTE, CAPTURE_NOTE):
+        if n:
+            lines += ["", "Note: " + n]
+    return "\n".join(lines)
 
 
 def show_info(cfg):
@@ -497,6 +480,8 @@ def show_info(cfg):
             target=lambda: ctypes.windll.user32.MessageBoxW(None, text, "Mobile Remote", 0x40),
             daemon=True,
         ).start()
+    elif IS_LINUX and which("notify-send"):
+        subprocess.Popen(["notify-send", "-a", "Mobile Remote", "Mobile Remote", text])
     else:
         print(text)
 
@@ -565,19 +550,29 @@ def run_tray(cfg):
         items.append(pystray.MenuItem("Start with Windows", toggle_autostart, checked=lambda _i: autostart_enabled()))
     items.append(pystray.MenuItem("Quit", quit_app))
     menu = pystray.Menu(*items)
-    pystray.Icon("mobileremote", img, "Mobile Remote", menu).run()
+    try:
+        pystray.Icon("mobileremote", img, "Mobile Remote", menu).run()
+    except Exception as ex:  # noqa: BLE001 - no tray on this desktop (some Wayland setups)
+        print(f"[tray] unavailable ({ex}); running headless (Ctrl+C to quit)")
+        while True:
+            time.sleep(3600)
 
 
 def main():
     cfg, first_run = load_config()
     print("=" * 52)
-    print("  Mobile Remote server")
+    print("  Mobile Remote server v" + VERSION)
     print(f"  Name     : {cfg['name']}")
     print(f"  PIN      : {cfg['pin']}   (change it in config.json)")
     print(f"  IPs      : {', '.join(local_ips()) or 'unknown'}")
+    print(f"  MAC      : {mac_address()}")
     print(f"  Port     : {cfg['port']}")
+    print(f"  Desktop  : {desktop_name()}  (input: {inp.name}, capture: {cap.name if cap else 'none'})")
     print(f"  Features : {', '.join(FEATURES)}")
     print(f"  Files to : {cfg['downloads']}")
+    for n in (INPUT_NOTE, CAPTURE_NOTE):
+        if n:
+            print(f"  NOTE     : {n}")
     print("=" * 52)
     if sys.stdout is not None:
         sys.stdout.flush()

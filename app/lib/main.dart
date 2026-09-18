@@ -25,12 +25,26 @@ class MobileRemoteApp extends StatefulWidget {
   State<MobileRemoteApp> createState() => _MobileRemoteAppState();
 }
 
-class _MobileRemoteAppState extends State<MobileRemoteApp> {
+class _MobileRemoteAppState extends State<MobileRemoteApp> with WidgetsBindingObserver {
   final _client = RemoteClient();
   final _settings = Settings()..load();
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Stop pings / reconnect attempts while the app is not on screen so the
+    // radio can idle; resume (and re-check the link) when it comes back.
+    _client.setPaused(state != AppLifecycleState.resumed);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _client.dispose();
     super.dispose();
   }
@@ -44,7 +58,7 @@ class _MobileRemoteAppState extends State<MobileRemoteApp> {
           listenable: _client,
           builder: (context, _) => AnimatedSwitcher(
             duration: const Duration(milliseconds: 250),
-            child: _client.isConnected
+            child: _client.isConnected || _client.status == ConnectionStatus.reconnecting
                 ? HomeShell(key: const ValueKey('home'), client: _client, settings: _settings)
                 : ConnectScreen(key: const ValueKey('connect'), client: _client),
           ),

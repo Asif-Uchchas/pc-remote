@@ -31,6 +31,7 @@ class _AppsScreenState extends State<AppsScreen> {
   }
 
   Future<void> _load() async {
+    widget.settings.seedMacrosFor(widget.client.pcOs);
     final p = await SharedPreferences.getInstance();
     _favourites = p.getStringList(_favKey) ?? const [];
     try {
@@ -106,9 +107,13 @@ class _AppsScreenState extends State<AppsScreen> {
   }
 
   Future<void> _addMacro() async {
-    final m = await showDialog<Macro>(context: context, builder: (ctx) => const _MacroDialog());
+    final superLabel = widget.client.pcIsLinux ? 'SUPER' : (widget.client.pcOs == 'macos' ? 'CMD' : 'WIN');
+    final m = await showDialog<Macro>(context: context, builder: (ctx) => _MacroDialog(superLabel: superLabel));
     if (m == null) return;
-    widget.settings.update((s) => s.macros = [...s.macros, m]);
+    widget.settings.update((s) {
+      s.macros = [...s.macros, m];
+      s.macrosEdited = true;
+    });
   }
 
   void _runMacro(Macro m) {
@@ -119,6 +124,7 @@ class _AppsScreenState extends State<AppsScreen> {
   @override
   Widget build(BuildContext context) {
     final apps = _apps;
+    final superLabel = widget.client.pcIsLinux ? 'SUPER' : (widget.client.pcOs == 'macos' ? 'CMD' : 'WIN');
     final favApps = [
       for (final name in _favourites)
         if (apps != null)
@@ -195,7 +201,11 @@ class _AppsScreenState extends State<AppsScreen> {
             _MacroRow(
               macro: m,
               onTap: () => _runMacro(m),
-              onDelete: () => widget.settings.update((s) => s.macros = [for (final x in s.macros) if (x != m) x]),
+              onDelete: () => widget.settings.update((s) {
+                s.macros = [for (final x in s.macros) if (x != m) x];
+                s.macrosEdited = true;
+              }),
+              superLabel: superLabel,
             ),
             const SizedBox(height: 8),
           ],
@@ -362,7 +372,8 @@ class _MacroRow extends StatelessWidget {
   final Macro macro;
   final VoidCallback onTap;
   final VoidCallback onDelete;
-  const _MacroRow({required this.macro, required this.onTap, required this.onDelete});
+  final String superLabel;
+  const _MacroRow({required this.macro, required this.onTap, required this.onDelete, this.superLabel = 'WIN'});
 
   @override
   Widget build(BuildContext context) => Material(
@@ -394,7 +405,7 @@ class _MacroRow extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(child: Text(macro.label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600))),
-                Text(macro.pretty, style: T.monoSmall),
+                Text(macro.pretty(superLabel: superLabel), style: T.monoSmall),
               ],
             ),
           ),
@@ -403,7 +414,8 @@ class _MacroRow extends StatelessWidget {
 }
 
 class _MacroDialog extends StatefulWidget {
-  const _MacroDialog();
+  final String superLabel;
+  const _MacroDialog({this.superLabel = 'WIN'});
 
   @override
   State<_MacroDialog> createState() => _MacroDialogState();
@@ -428,7 +440,7 @@ class _MacroDialogState extends State<_MacroDialog> {
               children: [
                 for (final m in ['ctrl', 'shift', 'alt', 'win'])
                   FilterChip(
-                    label: Text(m.toUpperCase(), style: const TextStyle(fontFamily: T.mono, fontSize: 11)),
+                    label: Text(m == 'win' ? widget.superLabel : m.toUpperCase(), style: const TextStyle(fontFamily: T.mono, fontSize: 11)),
                     selected: _mods.contains(m),
                     selectedColor: T.accent,
                     checkmarkColor: T.bg,
