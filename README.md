@@ -26,7 +26,27 @@ The server listens on TCP **48889** and answers discovery broadcasts on UDP **48
 Windows Firewall may ask to allow Python on private networks — say yes.
 
 ### Windows
-`python server.py`, or the packaged `MobileRemote.exe` (tray icon, "Start with Windows" option).
+Double-click `run_server.bat` (it finds Python, installs the dependencies on first
+run, then starts the server), or use the packaged `MobileRemote.exe` (tray icon,
+"Start with Windows" option).
+
+<details>
+<summary><b>"Python was not found; run without arguments to install from the Microsoft Store"</b></summary>
+
+Windows ships a 0-byte stub at
+`%LOCALAPPDATA%\Microsoft\WindowsApps\python.exe` (an *App execution alias*).
+When it comes before your real Python in `PATH`, typing `python` hits the stub,
+which prints that message and exits with code 9009 — even though Python is
+installed. `run_server.bat` works around it by testing each candidate before
+using it, so it should just work.
+
+To fix it system-wide (so plain `python` works in any terminal), either:
+* **Settings → Apps → Advanced app settings → App execution aliases** → switch
+  off `python.exe` and `python3.exe`, or
+* move your real Python folder above `…\Microsoft\WindowsApps` in the user
+  `PATH` (Settings → System → About → Advanced system settings → Environment
+  Variables).
+</details>
 
 ### macOS
 Grant Accessibility and Screen Recording permission when asked.
