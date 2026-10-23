@@ -1,0 +1,15 @@
+{
+  "artboards": [
+    { "file": "Connect.dc.html", "title": "1 · Connect", "x": 0, "y": 0, "w": 390, "h": 844 },
+    { "file": "Main.dc.html", "title": "2 · Touchpad", "x": 480, "y": 0, "w": 390, "h": 844 },
+    { "file": "Apps.dc.html", "title": "3 · Apps & shortcuts", "x": 960, "y": 0, "w": 390, "h": 844 },
+    { "file": "Screen.dc.html", "title": "4 · Screen preview", "x": 1440, "y": 0, "w": 390, "h": 844 },
+    { "file": "Share.dc.html", "title": "5 · Clipboard & files", "x": 1920, "y": 0, "w": 390, "h": 844 }
+  ],
+  "annotations": [
+    { "id": "note-flow", "x": 0, "y": -170, "w": 870, "text": "PC Remote · direction A (dark console)\nFlow: Connect → Touchpad. Bottom tabs switch between Pad / Keys / Apps / Screen / Share. Keys tab = the touchpad with the typing field open (not drawn separately).\nApp tiles use letters as placeholders — real icons come from the PC at runtime." },
+    { "id": "note-screen", "x": 1440, "y": -120, "w": 390, "text": "Screen preview needs new server work: capture at ~12 fps, JPEG, tap-to-click maps preview coords to the monitor." },
+    { "id": "note-share", "x": 1920, "y": -120, "w": 390, "text": "Clipboard sync is two-way. Files land in a fixed folder on the PC; photos use the Android share sheet too." }
+  ],
+  "launch": { "view": "canvas" }
+}

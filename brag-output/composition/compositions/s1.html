@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      /* Space Grotesk is not a bundled family, so it loads from assets/. */
+      @font-face {
+        font-family: "Space Grotesk";
+        src: url("assets/fonts/SpaceGrotesk.ttf") format("truetype");
+        font-weight: 400 700;
+        font-style: normal;
+      }
+      /* Palette lifted verbatim from app/lib/theme.dart */
+      :root {
+        --ground: #0b0d10; --surface: #101418; --surface2: #14181d; --surface3: #0f1317;
+        --line: #1f252c; --line2: #262d35;
+        --ink: #e8ecf1; --ink2: #c9d1da; --ink3: #8b95a2; --muted: #6b7684; --dim: #4a5461;
+        --accent: #5ee0ff; --ok: #7dffb0; --danger: #ff6b6b; --amber: #ffd166; --grid: #1c2229;
+        --font-display: "Space Grotesk", sans-serif;
+        --font-mono: "JetBrains Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--ground); }
+      #root {
+        position: relative; width: 1920px; height: 1080px;
+        background: var(--ground); font-family: var(--font-display); color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      .center-col {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+      }
+      .label {
+        font-family: var(--font-mono); font-size: 15px; letter-spacing: 1.6px;
+        color: var(--dim); text-transform: uppercase;
+      }
+      .dotgrid {
+        background-image: radial-gradient(var(--grid) 1.6px, transparent 1.6px);
+        background-size: 22px 22px;
+      }
+      #s1-hook { font-size: 68px; font-weight: 700; letter-spacing: -0.025em; color: var(--ink); }
+      #s1-panel {
+        margin-top: 46px; width: 560px; height: 74px; border-radius: 14px;
+        background: var(--surface); border: 1px solid var(--line2);
+        display: flex; align-items: center; gap: 16px; padding: 0 22px; opacity: 0;
+      }
+      #s1-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--accent); flex: none; }
+      #s1-states { position: relative; flex: 1; height: 22px; }
+      #s1-states span {
+        position: absolute; left: 0; top: 0; font-family: var(--font-mono); font-size: 17px;
+        color: var(--ink3); white-space: nowrap; opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="s1" data-width="1920" data-height="1080" data-duration="2.46">
+      <div class="center-col">
+        <div id="s1-hook">The Bluetooth app kept dropping.</div>
+        <div id="s1-panel">
+          <span id="s1-dot"></span>
+          <span id="s1-states" data-layout-ignore>
+            <span id="s1-st1">bluetooth keyboard &middot; connected</span>
+            <span id="s1-st2">bluetooth keyboard &middot; reconnecting&hellip;</span>
+            <span id="s1-st3">bluetooth keyboard &middot; disconnected</span>
+          </span>
+        </div>
+      </div>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      // The statement lands first, the evidence dies underneath it.
+      tl.fromTo("#s1-hook", { y: 12 }, { y: 0, duration: 0.42, ease: "power3.out" }, 0);
+      tl.fromTo("#s1-panel", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.3, ease: "power3.out" }, 0.45);
+      tl.to("#s1-st1", { opacity: 1, duration: 0.14 }, 0.5);
+      tl.to("#s1-st1", { opacity: 0, duration: 0.12 }, 1.0);
+      tl.to("#s1-st2", { opacity: 1, duration: 0.12 }, 1.02);
+      tl.to("#s1-dot", { backgroundColor: "#ffd166", duration: 0.2 }, 1.02);
+      tl.to("#s1-st2", { opacity: 0, duration: 0.12 }, 1.64);
+      tl.to("#s1-st3", { opacity: 1, duration: 0.12 }, 1.66);
+      tl.to("#s1-dot", { backgroundColor: "#ff6b6b", duration: 0.18 }, 1.66);
+      tl.to("#s1-dot", { opacity: 0.35, duration: 0.5, ease: "power2.out" }, 1.84);
+      window.__timelines["s1"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
