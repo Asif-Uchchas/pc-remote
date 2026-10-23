@@ -9,3 +9,11 @@ app/android/local.properties
 design/pc-remote-app-design.html
 server/build/
 server/dist/
+
+# Machine-specific PATH backup from the Python/WindowsApps fix
+path-backup-*.txt
+
+# Hyperframes build artifacts (the composition source is kept)
+brag-output/composition/.hyperframes/
+brag-output/composition/renders/
+brag-output/composition/node_modules/

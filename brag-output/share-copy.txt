@@ -1,0 +1,5 @@
+My Bluetooth keyboard app kept dropping, so I built my own.
+
+Mobile Remote: trackpad, keyboard, gamepad, clipboard sync and a live view of my desktop — over Wi-Fi, from my phone. One Python file on the PC, a 16 MB app on the phone.
+
+github.com/Asif-Uchchas/pc-remote

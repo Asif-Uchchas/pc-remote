@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      /* Space Grotesk is not a bundled family, so it loads from assets/. */
+      @font-face {
+        font-family: "Space Grotesk";
+        src: url("assets/fonts/SpaceGrotesk.ttf") format("truetype");
+        font-weight: 400 700;
+        font-style: normal;
+      }
+      /* Palette lifted verbatim from app/lib/theme.dart */
+      :root {
+        --ground: #0b0d10; --surface: #101418; --surface2: #14181d; --surface3: #0f1317;
+        --line: #1f252c; --line2: #262d35;
+        --ink: #e8ecf1; --ink2: #c9d1da; --ink3: #8b95a2; --muted: #6b7684; --dim: #4a5461;
+        --accent: #5ee0ff; --ok: #7dffb0; --danger: #ff6b6b; --amber: #ffd166; --grid: #1c2229;
+        --font-display: "Space Grotesk", sans-serif;
+        --font-mono: "JetBrains Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--ground); }
+      #root {
+        position: relative; width: 1920px; height: 1080px;
+        background: var(--ground); font-family: var(--font-display); color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+      .center-col {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+      }
+      .label {
+        font-family: var(--font-mono); font-size: 15px; letter-spacing: 1.6px;
+        color: var(--dim); text-transform: uppercase;
+      }
+      .dotgrid {
+        background-image: radial-gradient(var(--grid) 1.6px, transparent 1.6px);
+        background-size: 22px 22px;
+      }
+      .phone {
+        width: 372px; height: 788px; border-radius: 46px;
+        background: var(--ground); border: 2px solid var(--line2);
+        padding: 16px; position: relative; overflow: hidden;
+        box-shadow: 0 40px 90px rgba(0,0,0,0.55);
+      }
+      .phone-screen { position: absolute; inset: 16px; border-radius: 32px; background: var(--ground); overflow: hidden; }
+      .screen-pane { position: absolute; inset: 0; padding: 26px 20px; }
+      .finger {
+        position: absolute; left: 0; top: 0; width: 56px; height: 56px; margin: -28px 0 0 -28px;
+        border-radius: 50%; background: rgba(94,224,255,0.22); border: 2px solid var(--accent); opacity: 0;
+      }
+      .desktop {
+        border-radius: 16px; overflow: hidden; position: relative;
+        background: linear-gradient(160deg, #182333 0%, #0e1622 100%);
+        border: 1px solid var(--line2);
+      }
+      .win { position: absolute; border-radius: 7px; border: 1px solid #34404f; background: #212b38; overflow: hidden; }
+      .win .bar { height: 24px; background: #34404f; display: flex; align-items: center; gap: 6px; padding: 0 9px; }
+      .win .bar i { width: 8px; height: 8px; border-radius: 50%; background: #56637a; display: block; }
+      .win .body { padding: 12px; }
+      .win .body u { display: block; height: 7px; border-radius: 4px; background: #2e3a49; margin-bottom: 9px; text-decoration: none; }
+      .taskbar {
+        position: absolute; left: 0; right: 0; bottom: 0; height: 42px; background: #0a0f16;
+        display: flex; align-items: center; justify-content: center; gap: 10px;
+      }
+      .taskbar i { width: 11px; height: 11px; border-radius: 3px; background: #3a4656; display: block; }
+      .cursor { position: absolute; left: 0; top: 0; opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="s4" data-width="1920" data-height="1080" data-duration="3.82">
+      <div style="position: absolute; left: 960px; top: 452px">
+        <div id="s4-phone" style="position: absolute; left: -186px; top: -394px; opacity: 0">
+          <div class="phone" style="box-shadow: 0 50px 120px rgba(0,0,0,0.6)">
+            <div class="phone-screen">
+              <div id="s4-live" data-layout-allow-overflow style="position: absolute; left: 50%; top: 50%; width: 756px; height: 340px; margin: -170px 0 0 -378px; opacity: 0">
+                <div class="desktop" style="width: 100%; height: 100%; border: none; border-radius: 0" data-layout-ignore>
+                  <div class="win" style="left: 6%; top: 10%; width: 52%; height: 58%">
+                    <div class="bar"><i></i><i></i><i></i></div>
+                    <div class="body"><u style="width: 70%"></u><u style="width: 52%"></u><u style="width: 84%"></u><u style="width: 41%"></u></div>
+                  </div>
+                  <div id="s4-win2" class="win" style="left: 44%; top: 28%; width: 46%; height: 54%">
+                    <div class="bar"><i></i><i></i><i></i></div>
+                    <div class="body"><u style="width: 61%"></u><u style="width: 74%"></u><u style="width: 36%"></u></div>
+                  </div>
+                  <div class="taskbar" style="height: 26px"><i></i><i></i><i style="background: #5ee0ff"></i><i></i></div>
+                  <div id="s4-cursor" class="cursor"><svg width="24" height="24" viewBox="0 0 24 24" fill="#ffffff" stroke="#0b0d10" stroke-width="1.1"><path d="M5 3l14 8-7 1-4 7z"></path></svg></div>
+                  <div id="s4-finger" class="finger"></div>
+                  <span style="position: absolute; left: 14px; top: 12px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1.3px; color: var(--dim)">LIVE VIEW</span>
+                  <span style="position: absolute; right: 14px; top: 12px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 1.3px; color: var(--dim)">12 FPS &middot; 1280p</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="s4-line" style="position: absolute; left: 0; right: 0; top: 886px; text-align: center; font-size: 42px; font-weight: 600; letter-spacing: -0.02em; opacity: 0">
+        Rotate &rarr; your whole desktop, in your hand.
+      </div>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      // The live view is authored landscape inside a portrait screen and counter-rotated
+      // +90deg, so the phone's -90deg rotation lands it upright and full-bleed.
+      tl.set("#s4-live", { rotation: 90, transformOrigin: "50% 50%" }, 0);
+      // opacity is restated in the destination vars so every cold seek path reveals it
+      tl.fromTo(
+        "#s4-phone",
+        { opacity: 1, rotation: 0, scale: 1, transformOrigin: "50% 50%" },
+        { opacity: 1, rotation: -90, scale: 1.34, duration: 0.82, ease: "power3.inOut" },
+        0
+      );
+      tl.to("#s4-live", { opacity: 1, duration: 0.36, ease: "power2.out" }, 0.81);
+      tl.fromTo("#s4-line", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.36, ease: "power3.out" }, 1.21);
+      // tap-to-click, then drag a window
+      tl.set("#s4-finger", { x: 300, y: 150 }, 1.56);
+      tl.set("#s4-cursor", { x: 196, y: 120 }, 1.56);
+      tl.to("#s4-finger", { opacity: 1, duration: 0.12 }, 1.61);
+      tl.to("#s4-cursor", { opacity: 1, duration: 0.12 }, 1.69);
+      tl.to("#s4-finger", { scale: 0.76, duration: 0.1, ease: "power2.inOut" }, 1.71);
+      tl.to("#s4-finger", { scale: 1, duration: 0.14, ease: "power2.out" }, 1.81);
+      tl.to("#s4-cursor", { x: 300, y: 150, duration: 0.12, ease: "power2.out" }, 1.71);
+      tl.to("#s4-finger", { x: 470, y: 186, duration: 0.86, ease: "power1.inOut" }, 2.33);
+      tl.to("#s4-cursor", { x: 470, y: 186, duration: 0.86, ease: "power1.inOut" }, 2.33);
+      tl.to("#s4-win2", { x: 58, y: 22, duration: 0.86, ease: "power1.inOut" }, 2.33);
+      tl.to("#s4-finger", { opacity: 0, duration: 0.2 }, 3.39);
+      window.__timelines["s4"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
